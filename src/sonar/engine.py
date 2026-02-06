@@ -7,6 +7,19 @@ from pydantic_ai import Agent, RunContext
 from dataclasses import dataclass
 from tavily import TavilyClient
 
+# Import Phantom Client
+import sys
+from pathlib import Path
+phantom_src = Path(__file__).parent.parent.parent.parent / "phantom/backend/src"
+if phantom_src.exists():
+    sys.path.append(str(phantom_src))
+    try:
+        from phantom.client import log_recon_event
+    except ImportError:
+        async def log_recon_event(*args, **kwargs): pass
+else:
+    async def log_recon_event(*args, **kwargs): pass
+
 # Setup logging
 logger = logging.getLogger("sonar.agent")
 
@@ -29,26 +42,26 @@ class IntelBrief(BaseModel):
 
 # --- SONAR AGENT ---
 sonar_agent = Agent(
-    os.environ.get("SONAR_MODEL", "openai:glm-4.7-flash:latest"),
+    os.environ.get("SONAR_MODEL", "openai:glm-flash-64k:latest"),
     deps_type=SonarDeps,
     output_type=IntelBrief,
     system_prompt=(
         "You are Sonar, the Strategic Discovery Engine for the Netlooker Empire. "
-        "Your mission is to perform high-fidelity web research. "
-        "You have access to the Tavily Search tool. "
-        "Analyze the user's request, perform searches as needed, and synthesize a dense intel brief. "
-        "Focus on truth, precision, and high-signal data. 📡"
+        "Your mission is to perform high-fidelity web research via Tavily. 📡"
     )
 )
 
 @sonar_agent.tool
 async def web_search(ctx: RunContext[SonarDeps], query: str) -> str:
     """
-    Search the live web for real-time information. 
-    Use this for facts, news, documentation, or anything not in local memory.
+    Search the live web for real-time information via Tavily.
     """
     logger.info(f"📡 [Sonar-Ping] Query: {query}")
+    search_url = f"https://tavily.com/search?q={query.replace(' ', '+')}"
+    
     try:
+        await log_recon_event("sonar", "web_search", search_url, "active")
+        
         tavily = TavilyClient(api_key=ctx.deps.tavily_key)
         response = await asyncio.to_thread(
             tavily.search,
@@ -58,41 +71,27 @@ async def web_search(ctx: RunContext[SonarDeps], query: str) -> str:
             include_answer=True
         )
         
-        # Format results for the LLM to process
         results = response.get("results", [])
         output = f"Direct Answer: {response.get('answer', 'N/A')}\n\nSources:\n"
         for r in results:
             output += f"- {r['title']} ({r['url']}): {r['content']}\n"
         
+        await log_recon_event("sonar", "web_search", search_url, "success", signal_strength=len(output), content=output)
         return output
     except Exception as e:
-        logger.error(f"❌ [Sonar-Ping] Error: {e}")
+        await log_recon_event("sonar", "web_search", search_url, "error", content=str(e))
         return f"Search error: {str(e)}"
 
 class SonarEngine:
-    """The core engine interface for Sonar."""
-    
     def __init__(self):
         self.tavily_key = os.environ.get("TAVILY_API_KEY")
-        if not self.tavily_key:
-            logger.warning("⚠️ TAVILY_API_KEY not found in environment.")
 
     async def research(self, query: str) -> IntelBrief:
-        """Execute a full research cycle."""
         if not self.tavily_key:
-            return IntelBrief(
-                summary="Sonar Error: TAVILY_API_KEY not configured.",
-                sources=[]
-            )
-
+            return IntelBrief(summary="Error: No Tavily Key", sources=[])
         deps = SonarDeps(tavily_key=self.tavily_key)
-        
         try:
             result = await sonar_agent.run(query, deps=deps)
             return result.output
         except Exception as e:
-            logger.error(f"💀 [Sonar-Engine] Critical Failure: {e}")
-            return IntelBrief(
-                summary=f"Internal system error during research: {str(e)}",
-                sources=[]
-            )
+            return IntelBrief(summary=f"Error: {str(e)}", sources=[])
