@@ -1,0 +1,19 @@
+use_default_settings: true
+
+general:
+  instance_name: "sonar-local-searxng"
+
+search:
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "%(ENV_SEARXNG_SECRET)s"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+ui:
+  static_use_hash: true

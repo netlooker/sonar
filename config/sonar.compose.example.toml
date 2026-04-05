@@ -1,0 +1,28 @@
+[searxng]
+base_url = "http://searxng:8080"
+
+[database]
+path = "/data/sonar.sqlite"
+
+[http]
+host = "0.0.0.0"
+port = 8001
+auth_mode = "none"
+
+[cache]
+search_ttl_seconds = 900
+extract_ttl_seconds = 86400
+
+[fetch]
+connect_timeout_seconds = 10.0
+read_timeout_seconds = 20.0
+max_body_bytes = 2097152
+user_agent = "Sonar/0.1"
+
+[search]
+default_limit = 8
+max_limit = 20
+
+[ranking.domain_priors]
+"docs.python.org" = 0.35
+"wikipedia.org" = 0.10

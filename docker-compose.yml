@@ -1,0 +1,29 @@
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-local-dev-only}
+      BIND_ADDRESS: 0.0.0.0:8080
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+  sonar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sonar:compose
+    restart: unless-stopped
+    depends_on:
+      - searxng
+    environment:
+      SONAR_CONFIG: /app/config/sonar.toml
+    volumes:
+      - ./config/sonar.compose.example.toml:/app/config/sonar.toml:ro
+      - sonar-data:/data
+    ports:
+      - "8001:8001"
+
+volumes:
+  sonar-data:

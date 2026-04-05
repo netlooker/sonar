@@ -1,20 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "sonar"
 version = "0.1.0"
-description = "Add your description here"
+description = "Deterministic live-web search, fetch, and extraction service for agents"
 readme = "README.md"
-authors = [
-    { name = "netlooker", email = "netlooker@outlook.be" }
-]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.128.2",
-    "pydantic-ai>=1.56.0",
-    "pyyaml>=6.0.3",
-    "tavily-python>=0.7.21",
-    "uvicorn>=0.40.0",
+    "httpx>=0.27,<1.0",
+    "pydantic>=2.10,<3.0",
+    "trafilatura>=1.12,<2.0",
 ]
 
-[build-system]
-requires = ["uv_build>=0.9.26,<0.10.0"]
-build-backend = "uv_build"
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.116,<1.0",
+    "uvicorn>=0.35,<1.0",
+]
+mcp = [
+    "mcp[cli]>=1.26,<2.0",
+]
+dev = [
+    "pytest>=8.3,<10.0",
+    "fastapi>=0.116,<1.0",
+    "uvicorn>=0.35,<1.0",
+    "mcp[cli]>=1.26,<2.0",
+]
+
+[project.scripts]
+sonar-api = "sonar.web_api:main"
+sonar-mcp = "sonar.mcp_server:main"
+sonar-smoke = "sonar.smoke:main"
+sonar-export-openapi = "sonar.export_openapi:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sonar", "sonar.*"]

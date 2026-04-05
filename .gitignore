@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+*.egg-info/
+.DS_Store
+.env
+config/sonar.toml
+secrets/*
+!secrets/README.md
+!secrets/*.example.toml
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.sonar/

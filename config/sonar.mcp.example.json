@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "sonar": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/ABSOLUTE/PATH/TO/sonar",
+        "sonar-mcp"
+      ],
+      "env": {
+        "SONAR_CONFIG": "/ABSOLUTE/PATH/TO/sonar/config/sonar.toml",
+        "SONAR_MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
