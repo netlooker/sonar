@@ -38,7 +38,7 @@ def build_server():
     mcp = FastMCP(
         "Sonar",
         instructions=(
-            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions."
+            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions and durable prepared-source bundles."
         ),
         json_response=True,
     )
@@ -139,6 +139,9 @@ def build_server():
         direct_only: bool = True,
         force_refresh: bool = False,
         include_full_text: bool = True,
+        persist: bool = True,
+        output_dir: str | None = None,
+        include_sidecars: bool = True,
     ) -> dict[str, Any]:
         return prepare_paper_set(
             PreparePaperSetRequest(
@@ -150,6 +153,9 @@ def build_server():
                 direct_only=direct_only,
                 force_refresh=force_refresh,
                 include_full_text=include_full_text,
+                persist=persist,
+                output_dir=output_dir,
+                include_sidecars=include_sidecars,
             )
         ).model_dump()
 
@@ -164,6 +170,9 @@ def build_server():
         direct_only: bool = True,
         force_refresh: bool = False,
         include_full_text: bool = True,
+        persist: bool = True,
+        output_dir: str | None = None,
+        include_sidecars: bool = True,
     ) -> dict[str, Any]:
         return collect_sources_for_topic(
             CollectSourcesForTopicRequest(
@@ -176,6 +185,9 @@ def build_server():
                 direct_only=direct_only,
                 force_refresh=force_refresh,
                 include_full_text=include_full_text,
+                persist=persist,
+                output_dir=output_dir,
+                include_sidecars=include_sidecars,
             )
         ).model_dump()
 

@@ -50,7 +50,7 @@ def create_app():
         title="Sonar API",
         summary="HTTP and OpenAPI interface for deterministic live-web evidence.",
         version="0.1.0",
-        description="Expose Sonar search, fetch, extract, prepared paper sets, and runtime readiness over JSON/HTTP.",
+        description="Expose Sonar search, fetch, multi-format extraction, prepared paper sets, durable prepared-source bundles, and runtime readiness over JSON/HTTP.",
     )
 
     def map_error(exc: Exception) -> HTTPException:

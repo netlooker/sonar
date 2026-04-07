@@ -4,7 +4,13 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from sonar.errors import SonarForbiddenError
-from sonar.service_api import PreparePaperSetResponse, SearchResponse, SearchResult
+from sonar.service_api import (
+    PreparePaperSetResponse,
+    PreparedBundleSource,
+    PreparedSourceBundle,
+    SearchResponse,
+    SearchResult,
+)
 from sonar.web_api import create_app
 
 
@@ -76,6 +82,34 @@ def test_fetch_endpoint_maps_structured_error(monkeypatch):
 
 
 def test_prepare_paper_set_endpoint_uses_shared_service(monkeypatch):
+    bundle = PreparedSourceBundle(
+        bundle_id="bundle-1",
+        created_at=1.0,
+        request_fingerprint="fingerprint",
+        query="agent memory",
+        corpus="papers",
+        profile="scientific",
+        direct_only=True,
+        requested_count=1,
+        selected_count=1,
+        partial_results=False,
+        warnings=[],
+        search_run_id="run-1",
+        sources=[
+            PreparedBundleSource(
+                source_id="source-1",
+                title="Agent memory paper",
+                origin_url="https://arxiv.org/abs/2401.00001",
+                url="https://arxiv.org/abs/2401.00001",
+                selection_reason="direct paper page",
+                confidence=0.91,
+                source_type="paper_landing_page",
+                search_score=1.0,
+                search_snippet="paper",
+                retrieved_at=1.0,
+            )
+        ],
+    )
     expected = PreparePaperSetResponse(
         query="agent memory",
         profile="scientific",
@@ -83,17 +117,9 @@ def test_prepare_paper_set_endpoint_uses_shared_service(monkeypatch):
         requested_count=1,
         selected_count=1,
         partial_results=False,
-        sources=[
-            {
-                "title": "Agent memory paper",
-                "url": "https://arxiv.org/abs/2401.00001",
-                "selection_reason": "direct paper page",
-                "confidence": 0.91,
-                "source_type": "paper_landing_page",
-                "search_score": 1.0,
-                "search_snippet": "paper",
-            }
-        ],
+        warnings=[],
+        sources=[PreparedBundleSource.model_validate(bundle.sources[0].model_dump())],
+        bundle=bundle,
     )
 
     monkeypatch.setattr("sonar.web_api.prepare_paper_set", lambda request: expected)
@@ -103,3 +129,4 @@ def test_prepare_paper_set_endpoint_uses_shared_service(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["sources"][0]["title"] == "Agent memory paper"
+    assert response.json()["bundle"]["bundle_id"] == "bundle-1"

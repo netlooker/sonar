@@ -3,7 +3,7 @@
   "info": {
     "title": "Sonar API",
     "summary": "HTTP and OpenAPI interface for deterministic live-web evidence.",
-    "description": "Expose Sonar search, fetch, extract, prepared paper sets, and runtime readiness over JSON/HTTP.",
+    "description": "Expose Sonar search, fetch, multi-format extraction, prepared paper sets, durable prepared-source bundles, and runtime readiness over JSON/HTTP.",
     "version": "0.1.0"
   },
   "paths": {
@@ -658,6 +658,27 @@
             "type": "boolean",
             "title": "Include Full Text",
             "default": true
+          },
+          "persist": {
+            "type": "boolean",
+            "title": "Persist",
+            "default": true
+          },
+          "output_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Dir"
+          },
+          "include_sidecars": {
+            "type": "boolean",
+            "title": "Include Sidecars",
+            "default": true
           }
         },
         "type": "object",
@@ -709,6 +730,9 @@
             },
             "type": "array",
             "title": "Sources"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/PreparedSourceBundle"
           }
         },
         "type": "object",
@@ -719,7 +743,8 @@
           "direct_only",
           "requested_count",
           "selected_count",
-          "partial_results"
+          "partial_results",
+          "bundle"
         ],
         "title": "CollectSourcesForTopicResponse"
       },
@@ -888,6 +913,17 @@
             ],
             "title": "Excerpt"
           },
+          "abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstract"
+          },
           "text": {
             "type": "string",
             "title": "Text"
@@ -895,6 +931,50 @@
           "word_count": {
             "type": "integer",
             "title": "Word Count"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "source_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Format"
+          },
+          "extraction_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Method"
+          },
+          "extraction_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Status"
           },
           "from_cache": {
             "type": "boolean",
@@ -976,6 +1056,17 @@
           "content_type": {
             "type": "string",
             "title": "Content Type"
+          },
+          "source_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Format"
           },
           "fetched_at": {
             "type": "number",
@@ -1214,6 +1305,27 @@
             "type": "boolean",
             "title": "Include Full Text",
             "default": true
+          },
+          "persist": {
+            "type": "boolean",
+            "title": "Persist",
+            "default": true
+          },
+          "output_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Dir"
+          },
+          "include_sidecars": {
+            "type": "boolean",
+            "title": "Include Sidecars",
+            "default": true
           }
         },
         "type": "object",
@@ -1261,6 +1373,9 @@
             },
             "type": "array",
             "title": "Sources"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/PreparedSourceBundle"
           }
         },
         "type": "object",
@@ -1270,15 +1385,24 @@
           "direct_only",
           "requested_count",
           "selected_count",
-          "partial_results"
+          "partial_results",
+          "bundle"
         ],
         "title": "PreparePaperSetResponse"
       },
-      "PreparedSource": {
+      "PreparedBundleSource": {
         "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
           "title": {
             "type": "string",
             "title": "Title"
+          },
+          "origin_url": {
+            "type": "string",
+            "title": "Origin Url"
           },
           "url": {
             "type": "string",
@@ -1302,6 +1426,17 @@
             "type": "array",
             "title": "Authors"
           },
+          "author_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Raw"
+          },
           "summary": {
             "anyOf": [
               {
@@ -1313,6 +1448,17 @@
             ],
             "title": "Summary"
           },
+          "abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstract"
+          },
           "full_text": {
             "anyOf": [
               {
@@ -1323,6 +1469,17 @@
               }
             ],
             "title": "Full Text"
+          },
+          "full_text_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Text Path"
           },
           "selection_reason": {
             "type": "string",
@@ -1358,6 +1515,31 @@
             ],
             "title": "Document Id"
           },
+          "retrieved_at": {
+            "type": "number",
+            "title": "Retrieved At"
+          },
+          "extraction_status": {
+            "type": "string",
+            "title": "Extraction Status",
+            "default": "skipped"
+          },
+          "extraction_method": {
+            "type": "string",
+            "title": "Extraction Method",
+            "default": "none"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
           "search_score": {
             "type": "number",
             "title": "Search Score"
@@ -1375,19 +1557,330 @@
             "type": "boolean",
             "title": "From Extract Cache",
             "default": false
+          },
+          "source_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Warnings"
           }
         },
         "type": "object",
         "required": [
+          "source_id",
           "title",
+          "origin_url",
           "url",
           "selection_reason",
           "confidence",
           "source_type",
+          "retrieved_at",
+          "search_score",
+          "search_snippet"
+        ],
+        "title": "PreparedBundleSource"
+      },
+      "PreparedSource": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "origin_url": {
+            "type": "string",
+            "title": "Origin Url"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "author_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Raw"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstract"
+          },
+          "full_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Text"
+          },
+          "full_text_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Text Path"
+          },
+          "selection_reason": {
+            "type": "string",
+            "title": "Selection Reason"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type"
+          },
+          "direct_paper_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direct Paper Url"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "retrieved_at": {
+            "type": "number",
+            "title": "Retrieved At"
+          },
+          "extraction_status": {
+            "type": "string",
+            "title": "Extraction Status",
+            "default": "skipped"
+          },
+          "extraction_method": {
+            "type": "string",
+            "title": "Extraction Method",
+            "default": "none"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "search_score": {
+            "type": "number",
+            "title": "Search Score"
+          },
+          "search_snippet": {
+            "type": "string",
+            "title": "Search Snippet"
+          },
+          "from_search_cache": {
+            "type": "boolean",
+            "title": "From Search Cache",
+            "default": false
+          },
+          "from_extract_cache": {
+            "type": "boolean",
+            "title": "From Extract Cache",
+            "default": false
+          },
+          "source_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "title",
+          "origin_url",
+          "url",
+          "selection_reason",
+          "confidence",
+          "source_type",
+          "retrieved_at",
           "search_score",
           "search_snippet"
         ],
         "title": "PreparedSource"
+      },
+      "PreparedSourceBundle": {
+        "properties": {
+          "artifact_type": {
+            "type": "string",
+            "title": "Artifact Type",
+            "default": "prepared_source_bundle"
+          },
+          "bundle_version": {
+            "type": "integer",
+            "title": "Bundle Version",
+            "default": 1
+          },
+          "bundle_id": {
+            "type": "string",
+            "title": "Bundle Id"
+          },
+          "bundle_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Path"
+          },
+          "created_at": {
+            "type": "number",
+            "title": "Created At"
+          },
+          "request_fingerprint": {
+            "type": "string",
+            "title": "Request Fingerprint"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "corpus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corpus"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only"
+          },
+          "requested_count": {
+            "type": "integer",
+            "title": "Requested Count"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "partial_results": {
+            "type": "boolean",
+            "title": "Partial Results"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "search_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Run Id"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PreparedBundleSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bundle_id",
+          "created_at",
+          "request_fingerprint",
+          "query",
+          "profile",
+          "direct_only",
+          "requested_count",
+          "selected_count",
+          "partial_results"
+        ],
+        "title": "PreparedSourceBundle"
       },
       "RequirementSummary": {
         "properties": {

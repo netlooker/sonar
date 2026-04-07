@@ -7,13 +7,15 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, Field
 
+from .bundles import build_bundle_id, build_request_fingerprint, persist_prepared_bundle
 from .errors import SonarBadRequestError, SonarError, SonarNotFoundError, SonarUpstreamUnavailableError
-from .extract import extract_document, trafilatura_available
+from .extract import detect_source_format, extract_document, trafilatura_available
 from .fetch import fetch_url
 from .query_planner import generate_query_variants, normalize_query
 from .ranking import canonicalize_url, dedupe_results, query_signature, rank_results, url_domain
@@ -93,6 +95,7 @@ class FetchResponse(BaseModel):
     status: str
     status_code: int
     content_type: str
+    source_format: str | None = None
     fetched_at: float
     from_cache: bool
 
@@ -113,8 +116,13 @@ class ExtractResponse(BaseModel):
     published_at: str | None = None
     language: str | None = None
     excerpt: str | None = None
+    abstract: str | None = None
     text: str
     word_count: int
+    content_type: str | None = None
+    source_format: str | None = None
+    extraction_method: str | None = None
+    extraction_status: str | None = None
     from_cache: bool
 
 
@@ -129,21 +137,35 @@ class FindPapersRequest(BaseModel):
 
 
 class PreparedSource(BaseModel):
+    source_id: str
     title: str
+    origin_url: str
     url: str
     published: str | None = None
     authors: list[str] = Field(default_factory=list)
+    author_raw: str | None = None
     summary: str | None = None
+    abstract: str | None = None
     full_text: str | None = None
+    full_text_path: str | None = None
     selection_reason: str
     confidence: float
     source_type: str
     direct_paper_url: str | None = None
     document_id: str | None = None
+    retrieved_at: float
+    extraction_status: str = "skipped"
+    extraction_method: str = "none"
+    content_type: str | None = None
     search_score: float
     search_snippet: str
     from_search_cache: bool = False
     from_extract_cache: bool = False
+    source_warnings: list[str] = Field(default_factory=list)
+
+
+class PreparedBundleSource(PreparedSource):
+    pass
 
 
 class FindPapersResponse(BaseModel):
@@ -155,8 +177,30 @@ class FindPapersResponse(BaseModel):
     candidates: list[PreparedSource] = Field(default_factory=list)
 
 
+class PreparedSourceBundle(BaseModel):
+    artifact_type: str = "prepared_source_bundle"
+    bundle_version: int = 1
+    bundle_id: str
+    bundle_path: str | None = None
+    created_at: float
+    request_fingerprint: str
+    query: str
+    corpus: str | None = None
+    profile: str
+    direct_only: bool
+    requested_count: int
+    selected_count: int
+    partial_results: bool
+    warnings: list[str] = Field(default_factory=list)
+    search_run_id: str | None = None
+    sources: list[PreparedBundleSource] = Field(default_factory=list)
+
+
 class PreparePaperSetRequest(FindPapersRequest):
     include_full_text: bool = True
+    persist: bool = True
+    output_dir: str | None = None
+    include_sidecars: bool = True
 
 
 class PreparePaperSetResponse(BaseModel):
@@ -168,6 +212,7 @@ class PreparePaperSetResponse(BaseModel):
     partial_results: bool
     warnings: list[str] = Field(default_factory=list)
     sources: list[PreparedSource] = Field(default_factory=list)
+    bundle: PreparedSourceBundle
 
 
 class CollectSourcesForTopicRequest(BaseModel):
@@ -180,6 +225,9 @@ class CollectSourcesForTopicRequest(BaseModel):
     direct_only: bool = True
     force_refresh: bool = False
     include_full_text: bool = True
+    persist: bool = True
+    output_dir: str | None = None
+    include_sidecars: bool = True
 
 
 class CollectSourcesForTopicResponse(BaseModel):
@@ -192,6 +240,7 @@ class CollectSourcesForTopicResponse(BaseModel):
     partial_results: bool
     warnings: list[str] = Field(default_factory=list)
     sources: list[PreparedSource] = Field(default_factory=list)
+    bundle: PreparedSourceBundle
 
 
 @dataclass(frozen=True)
@@ -248,6 +297,7 @@ DIRECT_PAPER_PATTERNS = (
     "pubmed.ncbi.nlm.nih.gov/",
     "science.org/doi/",
 )
+DIRECT_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".odt", ".md", ".txt"}
 PAPER_HINTS = (
     "abstract",
     "conference",
@@ -410,6 +460,7 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
                 status=str(existing["status"]),
                 status_code=int(existing["status_code"]),
                 content_type=str(existing["content_type"]),
+                source_format=existing["source_format"],
                 fetched_at=float(existing["fetched_at"]),
                 from_cache=True,
             )
@@ -435,6 +486,7 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
             fetched_at=now,
             fetch_expires_at=now + settings.cache.extract_ttl_seconds,
             extractable=artifact.extractable,
+            source_format=artifact.source_format,
         )
         return FetchResponse(
             document_id=document_id,
@@ -443,6 +495,7 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
             status=artifact.status,
             status_code=artifact.status_code,
             content_type=artifact.content_type,
+            source_format=artifact.source_format,
             fetched_at=now,
             from_cache=False,
         )
@@ -457,7 +510,13 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
     try:
         now = time()
         row = _resolve_document(repo, request)
-        if row is not None and not request.force_refresh and row["text"] and row["extract_expires_at"] and float(row["extract_expires_at"]) > now:
+        if (
+            row is not None
+            and not request.force_refresh
+            and row["text"]
+            and row["extract_expires_at"]
+            and float(row["extract_expires_at"]) > now
+        ):
             return ExtractResponse(
                 document_id=str(row["document_id"]),
                 canonical_url=str(row["canonical_url"]),
@@ -466,8 +525,13 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
                 published_at=row["published_at"],
                 language=row["language"],
                 excerpt=row["excerpt"],
+                abstract=row["abstract"],
                 text=str(row["text"]),
                 word_count=int(row["word_count"]),
+                content_type=row["content_type"],
+                source_format=row["source_format"],
+                extraction_method=row["extraction_method"],
+                extraction_status=row["extraction_status"],
                 from_cache=True,
             )
 
@@ -476,9 +540,11 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
                 raise SonarNotFoundError(f"Unknown document id: {request.document_id}")
             url = str(row["final_url"])
             canonical_url = str(row["canonical_url"])
+            stored_url = str(row["url"])
         elif request.url:
             url = request.url
             canonical_url = canonicalize_url(request.url)
+            stored_url = request.url
         else:
             raise SonarBadRequestError("Provide either url or document_id.")
 
@@ -492,11 +558,11 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             include_body=True,
         )
         if not fetched.extractable:
-            raise SonarBadRequestError("Fetched document is not extractable HTML.")
+            raise SonarBadRequestError("Fetched document is not extractable.")
         document_id = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
         repo.store_document_fetch(
             document_id=document_id,
-            url=request.url or str(row["url"]),
+            url=stored_url,
             canonical_url=canonical_url,
             final_url=fetched.final_url,
             status=fetched.status,
@@ -505,8 +571,13 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             fetched_at=now,
             fetch_expires_at=now + settings.cache.extract_ttl_seconds,
             extractable=True,
+            source_format=fetched.source_format,
         )
-        extracted = extract_document(fetched.body or b"", url=fetched.final_url)
+        extracted = _extract_payload(
+            fetched.body or b"",
+            url=fetched.final_url,
+            content_type=fetched.content_type,
+        )
         repo.store_extract(
             document_id=document_id,
             title=extracted.title,
@@ -514,10 +585,13 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             published_at=extracted.published_at,
             language=extracted.language,
             excerpt=extracted.excerpt,
+            abstract=extracted.abstract,
             text=extracted.text,
             word_count=extracted.word_count,
             extract_hash=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
             extract_expires_at=now + settings.cache.extract_ttl_seconds,
+            extraction_method=extracted.extraction_method,
+            extraction_status=extracted.extraction_status,
         )
         return ExtractResponse(
             document_id=document_id,
@@ -527,8 +601,13 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             published_at=extracted.published_at,
             language=extracted.language,
             excerpt=extracted.excerpt,
+            abstract=extracted.abstract,
             text=extracted.text,
             word_count=extracted.word_count,
+            content_type=fetched.content_type,
+            source_format=extracted.source_format,
+            extraction_method=extracted.extraction_method,
+            extraction_status=extracted.extraction_status,
             from_cache=False,
         )
     finally:
@@ -554,6 +633,7 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
         warnings.append(
             f"prepared only {len(candidates)} paper-like candidates out of {requested_count} requested."
         )
+    retrieved_at = time()
     return FindPapersResponse(
         query=search_response.query,
         profile=request.profile,
@@ -562,7 +642,9 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
         warnings=warnings,
         candidates=[
             PreparedSource(
+                source_id=_stable_source_id(candidate.direct_paper_url or candidate.result.canonical_url),
                 title=candidate.result.title,
+                origin_url=candidate.result.url,
                 url=candidate.result.canonical_url,
                 published=candidate.result.published_at,
                 summary=candidate.result.snippet or None,
@@ -573,6 +655,7 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
                 search_score=candidate.result.score,
                 search_snippet=candidate.result.snippet,
                 from_search_cache=search_response.from_cache,
+                retrieved_at=retrieved_at,
             )
             for candidate in candidates
         ],
@@ -580,7 +663,7 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
 
 
 def prepare_paper_set(request: PreparePaperSetRequest, *, transport: httpx.BaseTransport | None = None) -> PreparePaperSetResponse:
-    settings, _ = resolve_runtime(request.config_path, request.db_path)
+    settings, db_path = resolve_runtime(request.config_path, request.db_path)
     requested_count = _validate_requested_count(request.count, settings.search.max_limit)
     candidate_pool_count = min(
         settings.search.max_limit,
@@ -597,62 +680,60 @@ def prepare_paper_set(request: PreparePaperSetRequest, *, transport: httpx.BaseT
         transport=transport,
     )
     warnings = list(search_response.warnings)
-    if len(candidates) < requested_count:
-        warnings.append(
-            f"prepared only {len(candidates)} paper-like candidates out of {requested_count} requested."
-        )
-    selected: list[PreparedSource] = []
+    selected: list[PreparedBundleSource] = []
     for candidate in candidates:
         if len(selected) >= requested_count:
             break
-        candidate_url = candidate.result.canonical_url
-        if candidate.source_type == "paper_pdf":
-            warnings.append(f"skipped PDF-only candidate without HTML extraction support: {candidate_url}")
-            continue
-        try:
-            extracted = extract_document_record(
-                ExtractRequest(
-                    url=candidate_url,
-                    config_path=request.config_path,
-                    db_path=request.db_path,
-                    force_refresh=request.force_refresh,
-                ),
-                transport=transport,
-            )
-        except SonarError as exc:
-            warnings.append(f"failed to prepare candidate {candidate_url}: {exc.message}")
-            continue
-        selected.append(
-            PreparedSource(
-                title=extracted.title or candidate.result.title,
-                url=extracted.canonical_url,
-                published=extracted.published_at or candidate.result.published_at,
-                authors=_split_authors(extracted.byline),
-                summary=_best_effort_summary(extracted.excerpt, extracted.text),
-                full_text=extracted.text if request.include_full_text else None,
-                selection_reason=candidate.selection_reason,
-                confidence=candidate.confidence,
-                source_type=candidate.source_type,
-                direct_paper_url=candidate.direct_paper_url or extracted.canonical_url,
-                document_id=extracted.document_id,
-                search_score=candidate.result.score,
-                search_snippet=candidate.result.snippet,
-                from_search_cache=search_response.from_cache,
-                from_extract_cache=extracted.from_cache,
-            )
+        prepared, source_warnings = _prepare_candidate_source(
+            candidate,
+            request=request,
+            search_from_cache=search_response.from_cache,
+            transport=transport,
         )
+        warnings.extend(source_warnings)
+        if prepared is not None:
+            selected.append(prepared)
     partial_results = search_response.partial_results or len(selected) < requested_count
     if len(selected) < requested_count:
         warnings.append(f"prepared {len(selected)} sources out of {requested_count} requested.")
+
+    bundle = _build_bundle(
+        query=search_response.query,
+        corpus="papers",
+        profile=request.profile,
+        direct_only=request.direct_only,
+        requested_count=requested_count,
+        partial_results=partial_results,
+        warnings=warnings,
+        search_run_id=search_response.run_id,
+        sources=selected,
+        include_full_text=request.include_full_text,
+        force_refresh=request.force_refresh,
+    )
+    if request.persist:
+        repo = Repository(db_path)
+        repo.initialize()
+        try:
+            persisted = persist_prepared_bundle(
+                bundle.model_dump(),
+                output_dir=request.output_dir,
+                include_sidecars=request.include_sidecars,
+                repo=repo,
+            )
+        finally:
+            repo.close()
+        bundle = PreparedSourceBundle.model_validate(persisted)
+
     return PreparePaperSetResponse(
         query=search_response.query,
         profile=request.profile,
         direct_only=request.direct_only,
         requested_count=requested_count,
-        selected_count=len(selected),
+        selected_count=len(bundle.sources),
         partial_results=partial_results,
         warnings=warnings,
-        sources=selected,
+        sources=[PreparedSource.model_validate(source.model_dump()) for source in bundle.sources],
+        bundle=bundle,
     )
 
 
@@ -674,9 +755,13 @@ def collect_sources_for_topic(
             direct_only=request.direct_only,
             force_refresh=request.force_refresh,
             include_full_text=request.include_full_text,
+            persist=request.persist,
+            output_dir=request.output_dir,
+            include_sidecars=request.include_sidecars,
         ),
         transport=transport,
     )
+    bundle = prepared.bundle.model_copy(update={"corpus": request.corpus})
     return CollectSourcesForTopicResponse(
         topic=request.topic,
         corpus=request.corpus,
@@ -687,6 +772,7 @@ def collect_sources_for_topic(
         partial_results=prepared.partial_results,
         warnings=prepared.warnings,
         sources=prepared.sources,
+        bundle=bundle,
     )
 
 
@@ -696,6 +782,261 @@ def _resolve_document(repo: Repository, request: ExtractRequest):
     if request.url:
         return repo.get_document_by_canonical_url(canonicalize_url(request.url))
     return None
+
+
+def _extract_payload(body: bytes, *, url: str, content_type: str | None):
+    try:
+        return extract_document(body, url=url, content_type=content_type)
+    except TypeError as exc:
+        if "content_type" not in str(exc):
+            raise
+        return extract_document(body, url=url)
+
+
+def _prepare_candidate_source(
+    candidate: _CandidateAssessment,
+    *,
+    request: PreparePaperSetRequest,
+    search_from_cache: bool,
+    transport: httpx.BaseTransport | None,
+) -> tuple[PreparedBundleSource | None, list[str]]:
+    retrieved_at = time()
+    warnings: list[str] = []
+    candidate_url = candidate.result.canonical_url
+    direct_document_url = _discover_direct_document_url(candidate)
+
+    html_extract: ExtractResponse | None = None
+    html_error: SonarError | None = None
+    direct_extract: ExtractResponse | None = None
+    direct_error: SonarError | None = None
+
+    if candidate.source_type in {"paper_landing_page", "catalog", "web_result"}:
+        try:
+            html_extract = extract_document_record(
+                ExtractRequest(
+                    url=candidate_url,
+                    config_path=request.config_path,
+                    db_path=request.db_path,
+                    force_refresh=request.force_refresh,
+                ),
+                transport=transport,
+            )
+        except SonarError as exc:
+            html_error = exc
+
+        if direct_document_url and direct_document_url != candidate_url:
+            try:
+                direct_extract = extract_document_record(
+                    ExtractRequest(
+                        url=direct_document_url,
+                        config_path=request.config_path,
+                        db_path=request.db_path,
+                        force_refresh=request.force_refresh,
+                    ),
+                    transport=transport,
+                )
+            except SonarError as exc:
+                direct_error = exc
+    else:
+        try:
+            direct_extract = extract_document_record(
+                ExtractRequest(
+                    url=candidate_url,
+                    config_path=request.config_path,
+                    db_path=request.db_path,
+                    force_refresh=request.force_refresh,
+                ),
+                transport=transport,
+            )
+        except SonarError as exc:
+            direct_error = exc
+
+    if html_extract and direct_extract:
+        if direct_error:
+            warnings.append(f"failed direct document follow-up for {direct_document_url}: {direct_error.message}")
+        return (
+            _merge_prepared_source(
+                candidate,
+                html_extract=html_extract,
+                direct_extract=direct_extract,
+                retrieved_at=retrieved_at,
+                search_from_cache=search_from_cache,
+                include_full_text=request.include_full_text,
+                direct_document_url=direct_document_url,
+            ),
+            warnings,
+        )
+
+    if html_extract:
+        if direct_error:
+            warnings.append(f"failed direct document follow-up for {direct_document_url}: {direct_error.message}")
+        return (
+            _build_prepared_source(
+                candidate,
+                extracted=html_extract,
+                retrieved_at=retrieved_at,
+                search_from_cache=search_from_cache,
+                include_full_text=request.include_full_text,
+                direct_paper_url=direct_document_url or candidate.direct_paper_url,
+                source_warnings=[],
+            ),
+            warnings,
+        )
+
+    if direct_extract:
+        if html_error:
+            warnings.append(f"landing-page extraction failed for {candidate_url}: {html_error.message}")
+        return (
+            _build_prepared_source(
+                candidate,
+                extracted=direct_extract,
+                retrieved_at=retrieved_at,
+                search_from_cache=search_from_cache,
+                include_full_text=request.include_full_text,
+                direct_paper_url=direct_document_url or candidate.result.canonical_url,
+                source_warnings=[],
+            ),
+            warnings,
+        )
+
+    if html_error:
+        warnings.append(f"failed to prepare candidate {candidate_url}: {html_error.message}")
+    if direct_error and direct_document_url != candidate_url:
+        warnings.append(f"failed to prepare direct document {direct_document_url}: {direct_error.message}")
+    elif direct_error:
+        warnings.append(f"failed to prepare candidate {candidate_url}: {direct_error.message}")
+    return None, warnings
+
+
+def _build_prepared_source(
+    candidate: _CandidateAssessment,
+    *,
+    extracted: ExtractResponse,
+    retrieved_at: float,
+    search_from_cache: bool,
+    include_full_text: bool,
+    direct_paper_url: str | None,
+    source_warnings: list[str],
+) -> PreparedBundleSource:
+    canonical_url = extracted.canonical_url
+    final_direct_url = direct_paper_url or candidate.direct_paper_url
+    return PreparedBundleSource(
+        source_id=_stable_source_id(final_direct_url or canonical_url),
+        title=extracted.title or candidate.result.title,
+        origin_url=candidate.result.url,
+        url=canonical_url,
+        published=extracted.published_at or candidate.result.published_at,
+        authors=_split_authors(extracted.byline),
+        author_raw=extracted.byline,
+        summary=_best_effort_summary(extracted.excerpt, extracted.abstract, extracted.text),
+        abstract=extracted.abstract,
+        full_text=extracted.text if include_full_text else None,
+        selection_reason=candidate.selection_reason,
+        confidence=candidate.confidence,
+        source_type=candidate.source_type,
+        direct_paper_url=final_direct_url,
+        document_id=extracted.document_id,
+        retrieved_at=retrieved_at,
+        extraction_status=extracted.extraction_status or "partial",
+        extraction_method=extracted.extraction_method or "none",
+        content_type=extracted.content_type,
+        search_score=candidate.result.score,
+        search_snippet=candidate.result.snippet,
+        from_search_cache=search_from_cache,
+        from_extract_cache=extracted.from_cache,
+        source_warnings=source_warnings,
+    )
+
+
+def _merge_prepared_source(
+    candidate: _CandidateAssessment,
+    *,
+    html_extract: ExtractResponse,
+    direct_extract: ExtractResponse,
+    retrieved_at: float,
+    search_from_cache: bool,
+    include_full_text: bool,
+    direct_document_url: str | None,
+) -> PreparedBundleSource:
+    primary = direct_extract if len(direct_extract.text) >= len(html_extract.text) else html_extract
+    full_text = primary.text if include_full_text else None
+    title = html_extract.title or direct_extract.title or candidate.result.title
+    published = html_extract.published_at or direct_extract.published_at or candidate.result.published_at
+    author_raw = html_extract.byline or direct_extract.byline
+    abstract = html_extract.abstract or html_extract.excerpt or direct_extract.abstract
+    summary = _best_effort_summary(html_extract.excerpt, abstract, primary.text)
+    direct_method = direct_extract.extraction_method or detect_source_format(
+        url=direct_document_url or direct_extract.canonical_url,
+        content_type=direct_extract.content_type,
+    )
+    return PreparedBundleSource(
+        source_id=_stable_source_id(direct_document_url or direct_extract.canonical_url),
+        title=title,
+        origin_url=candidate.result.url,
+        url=html_extract.canonical_url,
+        published=published,
+        authors=_split_authors(author_raw),
+        author_raw=author_raw,
+        summary=summary,
+        abstract=abstract,
+        full_text=full_text,
+        selection_reason=candidate.selection_reason,
+        confidence=candidate.confidence,
+        source_type=candidate.source_type,
+        direct_paper_url=direct_document_url or direct_extract.canonical_url,
+        document_id=primary.document_id,
+        retrieved_at=retrieved_at,
+        extraction_status=_merge_status(html_extract.extraction_status, direct_extract.extraction_status),
+        extraction_method=f"html+{direct_method or 'text'}",
+        content_type=primary.content_type,
+        search_score=candidate.result.score,
+        search_snippet=candidate.result.snippet,
+        from_search_cache=search_from_cache,
+        from_extract_cache=primary.from_cache,
+        source_warnings=[],
+    )
+
+
+def _build_bundle(
+    *,
+    query: str,
+    corpus: str,
+    profile: str,
+    direct_only: bool,
+    requested_count: int,
+    partial_results: bool,
+    warnings: list[str],
+    search_run_id: str | None,
+    sources: list[PreparedBundleSource],
+    include_full_text: bool,
+    force_refresh: bool,
+) -> PreparedSourceBundle:
+    request_fingerprint = build_request_fingerprint(
+        {
+            "query": query,
+            "corpus": corpus,
+            "profile": profile,
+            "direct_only": direct_only,
+            "requested_count": requested_count,
+            "include_full_text": include_full_text,
+            "force_refresh": force_refresh,
+        }
+    )
+    return PreparedSourceBundle(
+        bundle_id=build_bundle_id(request_fingerprint),
+        created_at=time(),
+        request_fingerprint=request_fingerprint,
+        query=query,
+        corpus=corpus,
+        profile=profile,
+        direct_only=direct_only,
+        requested_count=requested_count,
+        selected_count=len(sources),
+        partial_results=partial_results,
+        warnings=warnings,
+        search_run_id=search_run_id,
+        sources=sources,
+    )
 
 
 def _select_paper_candidates(
@@ -757,17 +1098,18 @@ def _assess_paper_candidate(result: SearchResult, *, direct_only: bool) -> _Cand
     source_type = "web_result"
     direct_paper_url: str | None = None
 
-    is_pdf = lower_url.endswith(".pdf")
-    is_direct = is_pdf or any(pattern in lower_url for pattern in DIRECT_PAPER_PATTERNS)
+    suffix = Path(urlparse(lower_url).path).suffix
+    is_document = suffix in DIRECT_DOCUMENT_SUFFIXES
+    is_direct = is_document or any(pattern in lower_url for pattern in DIRECT_PAPER_PATTERNS)
     is_academic = _domain_matches(domain, ACADEMIC_DOMAINS)
     is_aggregator = _domain_matches(domain, AGGREGATOR_DOMAINS)
     has_paper_hints = any(hint in lower_title or hint in lower_snippet for hint in PAPER_HINTS)
 
     if is_direct:
-        source_type = "paper_pdf" if is_pdf else "paper_landing_page"
+        source_type = _source_type_from_suffix(suffix)
         direct_paper_url = result.canonical_url
-        paper_score += 0.55 if not is_pdf else 0.35
-        reasons.append("direct paper page" if not is_pdf else "direct paper PDF")
+        paper_score += 0.55 if suffix not in DIRECT_DOCUMENT_SUFFIXES else 0.4
+        reasons.append("direct paper page" if suffix not in DIRECT_DOCUMENT_SUFFIXES else f"direct {suffix[1:]} document")
     if is_academic:
         paper_score += 0.3
         reasons.append("academic source domain")
@@ -796,6 +1138,31 @@ def _assess_paper_candidate(result: SearchResult, *, direct_only: bool) -> _Cand
     )
 
 
+def _discover_direct_document_url(candidate: _CandidateAssessment) -> str | None:
+    canonical_url = candidate.result.canonical_url
+    parsed = urlparse(canonical_url)
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix in DIRECT_DOCUMENT_SUFFIXES:
+        return canonical_url
+
+    if parsed.netloc.endswith("arxiv.org") and "/abs/" in parsed.path:
+        paper_id = parsed.path.split("/abs/", maxsplit=1)[1]
+        return f"https://arxiv.org/pdf/{paper_id}.pdf"
+
+    if parsed.netloc.endswith("openreview.net") and parsed.path == "/forum":
+        paper_id = parse_qs(parsed.query).get("id", [None])[0]
+        if paper_id:
+            return f"https://openreview.net/pdf?id={paper_id}"
+
+    if parsed.netloc.endswith("aclanthology.org") and parsed.path.endswith("/"):
+        return f"{canonical_url.rstrip('/')}.pdf"
+
+    if parsed.netloc.endswith("proceedings.mlr.press") and parsed.path.endswith(".html"):
+        return canonical_url[:-5] + ".pdf"
+
+    return None
+
+
 def _validate_preparation_profile(profile: str) -> None:
     if profile not in SUPPORTED_PREPARATION_PROFILES:
         supported = ", ".join(sorted(SUPPORTED_PREPARATION_PROFILES))
@@ -811,16 +1178,48 @@ def _validate_requested_count(count: int, max_limit: int) -> int:
 def _split_authors(byline: str | None) -> list[str]:
     if not byline:
         return []
-    return [part.strip() for part in re.split(r"\s*(?:,|;| and )\s*", byline) if part.strip()]
+    authors: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"\s*(?:,|;| and )\s*", byline):
+        normalized = part.strip()
+        if normalized and normalized not in seen:
+            authors.append(normalized)
+            seen.add(normalized)
+    return authors
 
 
-def _best_effort_summary(excerpt: str | None, text: str) -> str | None:
-    if excerpt:
-        return excerpt
-    normalized = " ".join(text.split())
-    if not normalized:
-        return None
-    return normalized[:400]
+def _best_effort_summary(excerpt: str | None, abstract: str | None, text: str) -> str | None:
+    for candidate in (excerpt, abstract, text):
+        normalized = " ".join((candidate or "").split())
+        if normalized:
+            return normalized[:400]
+    return None
+
+
+def _stable_source_id(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def _merge_status(left: str | None, right: str | None) -> str:
+    if left == "full" or right == "full":
+        return "full"
+    if left == "partial" or right == "partial":
+        return "partial"
+    return right or left or "failed"
+
+
+def _source_type_from_suffix(suffix: str) -> str:
+    if suffix == ".pdf":
+        return "paper_pdf"
+    if suffix == ".docx":
+        return "paper_docx"
+    if suffix == ".odt":
+        return "paper_odt"
+    if suffix == ".md":
+        return "paper_markdown"
+    if suffix == ".txt":
+        return "paper_text"
+    return "paper_landing_page"
 
 
 def _domain_matches(domain: str, candidates: set[str]) -> bool:

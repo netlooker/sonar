@@ -12,6 +12,8 @@ Sonar v1 is intentionally narrow:
 - external SearxNG for metasearch
 - deterministic query planning and ranking
 - cached fetch and extraction artifacts in SQLite
+- multi-format document extraction for HTML, PDF, DOCX, ODT, Markdown, and text
+- durable prepared-source bundle persistence for high-level research flows
 - thin HTTP/OpenAPI and MCP adapters
 - optional high-level paper-preparation facade for weaker local agents
 - no LLM reasoning layer in the core path
@@ -108,6 +110,7 @@ MCP tools:
 
 The low-level search/fetch/extract tools remain the canonical composable API.
 The paper-preparation tools collapse the retrieval loop for weaker local runtimes and return structured source bundles instead of requiring repeated orchestration.
+`prepare-paper-set` and `collect-sources` now auto-persist durable prepared bundles by default, including a JSON manifest and optional text sidecars for extracted source content.
 
 ## Docs
 

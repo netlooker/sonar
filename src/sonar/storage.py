@@ -6,6 +6,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Mapping
 
 
 @dataclass
@@ -84,8 +85,60 @@ class Repository:
                 domain TEXT PRIMARY KEY,
                 weight REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS prepared_bundles (
+                bundle_id TEXT PRIMARY KEY,
+                bundle_version INTEGER NOT NULL,
+                artifact_type TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                query TEXT NOT NULL,
+                corpus TEXT,
+                profile TEXT NOT NULL,
+                direct_only INTEGER NOT NULL,
+                requested_count INTEGER NOT NULL,
+                selected_count INTEGER NOT NULL,
+                partial_results INTEGER NOT NULL,
+                bundle_path TEXT,
+                search_run_id TEXT,
+                warnings_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS prepared_bundle_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bundle_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                document_id TEXT,
+                origin_url TEXT NOT NULL,
+                url TEXT NOT NULL,
+                direct_paper_url TEXT,
+                title TEXT NOT NULL,
+                authors_json TEXT NOT NULL,
+                author_raw TEXT,
+                published TEXT,
+                source_type TEXT NOT NULL,
+                retrieved_at REAL NOT NULL,
+                selection_reason TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                summary TEXT,
+                abstract TEXT,
+                full_text_path TEXT,
+                extraction_status TEXT NOT NULL,
+                extraction_method TEXT NOT NULL,
+                content_type TEXT,
+                search_score REAL NOT NULL,
+                search_snippet TEXT NOT NULL,
+                from_search_cache INTEGER NOT NULL,
+                from_extract_cache INTEGER NOT NULL,
+                source_warnings_json TEXT NOT NULL,
+                FOREIGN KEY(bundle_id) REFERENCES prepared_bundles(bundle_id)
+            );
             """
         )
+        self._ensure_column("documents", "source_format", "TEXT")
+        self._ensure_column("documents", "extraction_method", "TEXT")
+        self._ensure_column("documents", "extraction_status", "TEXT")
+        self._ensure_column("documents", "abstract", "TEXT")
         self.conn.commit()
 
     def upsert_domain_priors(self, priors: dict[str, float]) -> None:
@@ -199,13 +252,14 @@ class Repository:
         fetched_at: float,
         fetch_expires_at: float,
         extractable: bool,
+        source_format: str | None = None,
     ) -> None:
         self.conn.execute(
             """
             INSERT INTO documents(
                 document_id, url, canonical_url, final_url, status, status_code, content_type,
-                fetched_at, fetch_expires_at, extractable
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fetched_at, fetch_expires_at, extractable, source_format
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(canonical_url) DO UPDATE SET
                 document_id=excluded.document_id,
                 url=excluded.url,
@@ -215,7 +269,8 @@ class Repository:
                 content_type=excluded.content_type,
                 fetched_at=excluded.fetched_at,
                 fetch_expires_at=excluded.fetch_expires_at,
-                extractable=excluded.extractable
+                extractable=excluded.extractable,
+                source_format=excluded.source_format
             """,
             (
                 document_id,
@@ -228,6 +283,7 @@ class Repository:
                 fetched_at,
                 fetch_expires_at,
                 int(extractable),
+                source_format,
             ),
         )
         self.conn.commit()
@@ -241,16 +297,20 @@ class Repository:
         published_at: str | None,
         language: str | None,
         excerpt: str | None,
+        abstract: str | None,
         text: str,
         word_count: int,
         extract_hash: str,
         extract_expires_at: float,
+        extraction_method: str,
+        extraction_status: str,
     ) -> None:
         self.conn.execute(
             """
             UPDATE documents
-            SET title = ?, byline = ?, published_at = ?, language = ?, excerpt = ?, text = ?,
-                word_count = ?, extract_hash = ?, extract_expires_at = ?
+            SET title = ?, byline = ?, published_at = ?, language = ?, excerpt = ?, abstract = ?, text = ?,
+                word_count = ?, extract_hash = ?, extract_expires_at = ?, extraction_method = ?,
+                extraction_status = ?
             WHERE document_id = ?
             """,
             (
@@ -259,11 +319,151 @@ class Repository:
                 published_at,
                 language,
                 excerpt,
+                abstract,
                 text,
                 word_count,
                 extract_hash,
                 extract_expires_at,
+                extraction_method,
+                extraction_status,
                 document_id,
             ),
         )
         self.conn.commit()
+
+    def store_prepared_bundle(self, bundle: Mapping[str, Any]) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO prepared_bundles(
+                bundle_id, bundle_version, artifact_type, created_at, request_fingerprint, query, corpus,
+                profile, direct_only, requested_count, selected_count, partial_results, bundle_path,
+                search_run_id, warnings_json
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(bundle["bundle_id"]),
+                int(bundle["bundle_version"]),
+                str(bundle["artifact_type"]),
+                float(bundle["created_at"]),
+                str(bundle["request_fingerprint"]),
+                str(bundle["query"]),
+                bundle.get("corpus"),
+                str(bundle["profile"]),
+                int(bool(bundle["direct_only"])),
+                int(bundle["requested_count"]),
+                int(bundle["selected_count"]),
+                int(bool(bundle["partial_results"])),
+                bundle.get("bundle_path"),
+                bundle.get("search_run_id"),
+                json.dumps(bundle.get("warnings", [])),
+            ),
+        )
+        self.conn.execute(
+            "DELETE FROM prepared_bundle_sources WHERE bundle_id = ?",
+            (str(bundle["bundle_id"]),),
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO prepared_bundle_sources(
+                bundle_id, source_id, document_id, origin_url, url, direct_paper_url, title, authors_json,
+                author_raw, published, source_type, retrieved_at, selection_reason, confidence, summary,
+                abstract, full_text_path, extraction_status, extraction_method, content_type, search_score,
+                search_snippet, from_search_cache, from_extract_cache, source_warnings_json
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    str(bundle["bundle_id"]),
+                    str(source["source_id"]),
+                    source.get("document_id"),
+                    str(source["origin_url"]),
+                    str(source["url"]),
+                    source.get("direct_paper_url"),
+                    str(source["title"]),
+                    json.dumps(source.get("authors", [])),
+                    source.get("author_raw"),
+                    source.get("published"),
+                    str(source["source_type"]),
+                    float(source["retrieved_at"]),
+                    str(source["selection_reason"]),
+                    float(source["confidence"]),
+                    source.get("summary"),
+                    source.get("abstract"),
+                    source.get("full_text_path"),
+                    str(source["extraction_status"]),
+                    str(source["extraction_method"]),
+                    source.get("content_type"),
+                    float(source["search_score"]),
+                    str(source["search_snippet"]),
+                    int(bool(source["from_search_cache"])),
+                    int(bool(source["from_extract_cache"])),
+                    json.dumps(source.get("source_warnings", [])),
+                )
+                for source in bundle.get("sources", [])
+            ],
+        )
+        self.conn.commit()
+
+    def get_prepared_bundle(self, bundle_id: str) -> dict[str, Any] | None:
+        bundle_row = self.conn.execute(
+            "SELECT * FROM prepared_bundles WHERE bundle_id = ?",
+            (bundle_id,),
+        ).fetchone()
+        if bundle_row is None:
+            return None
+        source_rows = self.conn.execute(
+            "SELECT * FROM prepared_bundle_sources WHERE bundle_id = ? ORDER BY id ASC",
+            (bundle_id,),
+        ).fetchall()
+        return {
+            "artifact_type": str(bundle_row["artifact_type"]),
+            "bundle_version": int(bundle_row["bundle_version"]),
+            "bundle_id": str(bundle_row["bundle_id"]),
+            "bundle_path": bundle_row["bundle_path"],
+            "created_at": float(bundle_row["created_at"]),
+            "request_fingerprint": str(bundle_row["request_fingerprint"]),
+            "query": str(bundle_row["query"]),
+            "corpus": bundle_row["corpus"],
+            "profile": str(bundle_row["profile"]),
+            "direct_only": bool(bundle_row["direct_only"]),
+            "requested_count": int(bundle_row["requested_count"]),
+            "selected_count": int(bundle_row["selected_count"]),
+            "partial_results": bool(bundle_row["partial_results"]),
+            "warnings": json.loads(bundle_row["warnings_json"]),
+            "search_run_id": bundle_row["search_run_id"],
+            "sources": [
+                {
+                    "source_id": str(source["source_id"]),
+                    "document_id": source["document_id"],
+                    "origin_url": str(source["origin_url"]),
+                    "url": str(source["url"]),
+                    "direct_paper_url": source["direct_paper_url"],
+                    "title": str(source["title"]),
+                    "authors": json.loads(source["authors_json"]),
+                    "author_raw": source["author_raw"],
+                    "published": source["published"],
+                    "source_type": str(source["source_type"]),
+                    "retrieved_at": float(source["retrieved_at"]),
+                    "selection_reason": str(source["selection_reason"]),
+                    "confidence": float(source["confidence"]),
+                    "summary": source["summary"],
+                    "abstract": source["abstract"],
+                    "full_text_path": source["full_text_path"],
+                    "extraction_status": str(source["extraction_status"]),
+                    "extraction_method": str(source["extraction_method"]),
+                    "content_type": source["content_type"],
+                    "search_score": float(source["search_score"]),
+                    "search_snippet": str(source["search_snippet"]),
+                    "from_search_cache": bool(source["from_search_cache"]),
+                    "from_extract_cache": bool(source["from_extract_cache"]),
+                    "source_warnings": json.loads(source["source_warnings_json"]),
+                }
+                for source in source_rows
+            ],
+        }
+
+    def _ensure_column(self, table: str, column: str, column_type: str) -> None:
+        rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        names = {str(row["name"]) for row in rows}
+        if column not in names:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")

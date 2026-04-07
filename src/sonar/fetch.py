@@ -9,9 +9,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 
 from .errors import SonarForbiddenError, SonarTimeoutError, SonarUpstreamUnavailableError
-
-
-HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
+from .extract import detect_source_format
 
 
 @dataclass(frozen=True)
@@ -23,6 +21,7 @@ class FetchArtifact:
     content_type: str
     body: bytes | None
     extractable: bool
+    source_format: str | None
 
 
 def fetch_url(
@@ -47,7 +46,9 @@ def fetch_url(
         with client.stream("GET", url) as response:
             response.raise_for_status()
             content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-            extractable = content_type in HTML_CONTENT_TYPES
+            final_url = str(response.url)
+            source_format = detect_source_format(url=final_url, content_type=content_type)
+            extractable = source_format is not None
             chunks: list[bytes] = []
             total = 0
             for chunk in response.iter_bytes():
@@ -58,12 +59,13 @@ def fetch_url(
                     chunks.append(chunk)
             return FetchArtifact(
                 url=url,
-                final_url=str(response.url),
+                final_url=final_url,
                 status="fetched",
                 status_code=response.status_code,
                 content_type=content_type,
                 body=b"".join(chunks) if include_body else None,
                 extractable=extractable,
+                source_format=source_format,
             )
     except SonarForbiddenError:
         raise

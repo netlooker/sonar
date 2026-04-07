@@ -15,7 +15,9 @@ Core responsibilities:
 - URL canonicalization and dedupe
 - ranking with freshness and domain priors
 - cached fetch metadata
-- readable-text extraction and metadata persistence
+- readable-text extraction across HTML, PDF, DOCX, ODT, Markdown, and text
+- metadata persistence for fetched documents and prepared-source bundle registries
+- durable prepared-source manifests for downstream handoff to note-writing and indexing systems
 
 Design rules:
 
