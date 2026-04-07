@@ -7,12 +7,18 @@ from typing import Any
 
 from .errors import SonarError
 from .service_api import (
+    CollectSourcesForTopicRequest,
     ExtractRequest,
     FetchRequest,
+    FindPapersRequest,
     HealthRequest,
+    PreparePaperSetRequest,
     SearchRequest,
+    collect_sources_for_topic,
     extract_document_record,
     fetch_document_record,
+    find_papers,
+    prepare_paper_set,
     runtime_requirements as service_runtime_requirements,
     search_web,
 )
@@ -32,7 +38,7 @@ def build_server():
     mcp = FastMCP(
         "Sonar",
         instructions=(
-            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps."
+            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions."
         ),
         json_response=True,
     )
@@ -98,6 +104,78 @@ def build_server():
                 config_path=config_path,
                 db_path=db_path,
                 force_refresh=force_refresh,
+            )
+        ).model_dump()
+
+    @mcp.tool(name="sonar_find_papers", description="Return curated scientific paper candidates for a topic")
+    def sonar_find_papers(
+        query: str,
+        config_path: str | None = None,
+        db_path: str | None = None,
+        count: int = 5,
+        profile: str = "scientific",
+        direct_only: bool = True,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        return find_papers(
+            FindPapersRequest(
+                query=query,
+                config_path=config_path,
+                db_path=db_path,
+                count=count,
+                profile=profile,
+                direct_only=direct_only,
+                force_refresh=force_refresh,
+            )
+        ).model_dump()
+
+    @mcp.tool(name="sonar_prepare_paper_set", description="Search, filter, and extract a prepared scientific paper set in one call")
+    def sonar_prepare_paper_set(
+        query: str,
+        config_path: str | None = None,
+        db_path: str | None = None,
+        count: int = 5,
+        profile: str = "scientific",
+        direct_only: bool = True,
+        force_refresh: bool = False,
+        include_full_text: bool = True,
+    ) -> dict[str, Any]:
+        return prepare_paper_set(
+            PreparePaperSetRequest(
+                query=query,
+                config_path=config_path,
+                db_path=db_path,
+                count=count,
+                profile=profile,
+                direct_only=direct_only,
+                force_refresh=force_refresh,
+                include_full_text=include_full_text,
+            )
+        ).model_dump()
+
+    @mcp.tool(name="sonar_collect_sources_for_topic", description="Collect a compact structured source bundle for a topic")
+    def sonar_collect_sources_for_topic(
+        topic: str,
+        config_path: str | None = None,
+        db_path: str | None = None,
+        max_results: int = 5,
+        corpus: str = "papers",
+        profile: str = "scientific",
+        direct_only: bool = True,
+        force_refresh: bool = False,
+        include_full_text: bool = True,
+    ) -> dict[str, Any]:
+        return collect_sources_for_topic(
+            CollectSourcesForTopicRequest(
+                topic=topic,
+                config_path=config_path,
+                db_path=db_path,
+                max_results=max_results,
+                corpus=corpus,
+                profile=profile,
+                direct_only=direct_only,
+                force_refresh=force_refresh,
+                include_full_text=include_full_text,
             )
         ).model_dump()
 

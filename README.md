@@ -13,6 +13,7 @@ Sonar v1 is intentionally narrow:
 - deterministic query planning and ranking
 - cached fetch and extraction artifacts in SQLite
 - thin HTTP/OpenAPI and MCP adapters
+- optional high-level paper-preparation facade for weaker local agents
 - no LLM reasoning layer in the core path
 
 ## Quick Start
@@ -91,6 +92,9 @@ HTTP routes:
 - `POST /search`
 - `POST /fetch`
 - `POST /extract`
+- `POST /find-papers`
+- `POST /prepare-paper-set`
+- `POST /collect-sources`
 
 MCP tools:
 
@@ -98,6 +102,12 @@ MCP tools:
 - `sonar_search`
 - `sonar_fetch`
 - `sonar_extract`
+- `sonar_find_papers`
+- `sonar_prepare_paper_set`
+- `sonar_collect_sources_for_topic`
+
+The low-level search/fetch/extract tools remain the canonical composable API.
+The paper-preparation tools collapse the retrieval loop for weaker local runtimes and return structured source bundles instead of requiring repeated orchestration.
 
 ## Docs
 

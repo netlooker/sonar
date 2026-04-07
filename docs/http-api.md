@@ -8,6 +8,14 @@ Routes:
 - `POST /search`
 - `POST /fetch`
 - `POST /extract`
+- `POST /find-papers`
+- `POST /prepare-paper-set`
+- `POST /collect-sources`
+
+Route roles:
+
+- `search`, `fetch`, and `extract` remain the canonical low-level transport surface.
+- `find-papers`, `prepare-paper-set`, and `collect-sources` provide a higher-level facade for agent runtimes that struggle with multi-step retrieval orchestration.
 
 Default bind:
 

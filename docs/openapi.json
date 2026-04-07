@@ -3,7 +3,7 @@
   "info": {
     "title": "Sonar API",
     "summary": "HTTP and OpenAPI interface for deterministic live-web evidence.",
-    "description": "Expose Sonar search, fetch, extract, and runtime readiness over JSON/HTTP.",
+    "description": "Expose Sonar search, fetch, extract, prepared paper sets, and runtime readiness over JSON/HTTP.",
     "version": "0.1.0"
   },
   "paths": {
@@ -324,10 +324,405 @@
           }
         }
       }
+    },
+    "/find-papers": {
+      "post": {
+        "tags": [
+          "sonar"
+        ],
+        "summary": "Post Find Papers",
+        "operationId": "post_find_papers_find_papers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindPapersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindPapersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prepare-paper-set": {
+      "post": {
+        "tags": [
+          "sonar"
+        ],
+        "summary": "Post Prepare Paper Set",
+        "operationId": "post_prepare_paper_set_prepare_paper_set_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreparePaperSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparePaperSetResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Failed Dependency",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collect-sources": {
+      "post": {
+        "tags": [
+          "sonar"
+        ],
+        "summary": "Post Collect Sources",
+        "operationId": "post_collect_sources_collect_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectSourcesForTopicRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectSourcesForTopicResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Failed Dependency",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "CollectSourcesForTopicRequest": {
+        "properties": {
+          "topic": {
+            "type": "string",
+            "title": "Topic"
+          },
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Path"
+          },
+          "db_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Db Path"
+          },
+          "max_results": {
+            "type": "integer",
+            "title": "Max Results",
+            "default": 5
+          },
+          "corpus": {
+            "type": "string",
+            "title": "Corpus",
+            "default": "papers"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "default": "scientific"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only",
+            "default": true
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "title": "Force Refresh",
+            "default": false
+          },
+          "include_full_text": {
+            "type": "boolean",
+            "title": "Include Full Text",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "topic"
+        ],
+        "title": "CollectSourcesForTopicRequest"
+      },
+      "CollectSourcesForTopicResponse": {
+        "properties": {
+          "topic": {
+            "type": "string",
+            "title": "Topic"
+          },
+          "corpus": {
+            "type": "string",
+            "title": "Corpus"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only"
+          },
+          "requested_count": {
+            "type": "integer",
+            "title": "Requested Count"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "partial_results": {
+            "type": "boolean",
+            "title": "Partial Results"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PreparedSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topic",
+          "corpus",
+          "profile",
+          "direct_only",
+          "requested_count",
+          "selected_count",
+          "partial_results"
+        ],
+        "title": "CollectSourcesForTopicResponse"
+      },
       "ErrorResponse": {
         "properties": {
           "error_type": {
@@ -604,6 +999,103 @@
         ],
         "title": "FetchResponse"
       },
+      "FindPapersRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Path"
+          },
+          "db_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Db Path"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 5
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "default": "scientific"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only",
+            "default": true
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "title": "Force Refresh",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "FindPapersRequest"
+      },
+      "FindPapersResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only"
+          },
+          "partial_results": {
+            "type": "boolean",
+            "title": "Partial Results"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/PreparedSource"
+            },
+            "type": "array",
+            "title": "Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "profile",
+          "direct_only",
+          "partial_results"
+        ],
+        "title": "FindPapersResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -669,6 +1161,233 @@
           "ready"
         ],
         "title": "HealthResponse"
+      },
+      "PreparePaperSetRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Path"
+          },
+          "db_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Db Path"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 5
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "default": "scientific"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only",
+            "default": true
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "title": "Force Refresh",
+            "default": false
+          },
+          "include_full_text": {
+            "type": "boolean",
+            "title": "Include Full Text",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "PreparePaperSetRequest"
+      },
+      "PreparePaperSetResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile"
+          },
+          "direct_only": {
+            "type": "boolean",
+            "title": "Direct Only"
+          },
+          "requested_count": {
+            "type": "integer",
+            "title": "Requested Count"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "partial_results": {
+            "type": "boolean",
+            "title": "Partial Results"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PreparedSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "profile",
+          "direct_only",
+          "requested_count",
+          "selected_count",
+          "partial_results"
+        ],
+        "title": "PreparePaperSetResponse"
+      },
+      "PreparedSource": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "full_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Text"
+          },
+          "selection_reason": {
+            "type": "string",
+            "title": "Selection Reason"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type"
+          },
+          "direct_paper_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direct Paper Url"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "search_score": {
+            "type": "number",
+            "title": "Search Score"
+          },
+          "search_snippet": {
+            "type": "string",
+            "title": "Search Snippet"
+          },
+          "from_search_cache": {
+            "type": "boolean",
+            "title": "From Search Cache",
+            "default": false
+          },
+          "from_extract_cache": {
+            "type": "boolean",
+            "title": "From Extract Cache",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url",
+          "selection_reason",
+          "confidence",
+          "source_type",
+          "search_score",
+          "search_snippet"
+        ],
+        "title": "PreparedSource"
       },
       "RequirementSummary": {
         "properties": {

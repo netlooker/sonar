@@ -23,6 +23,9 @@ def test_build_server_lists_expected_tools():
     assert "sonar_search" in tool_names
     assert "sonar_fetch" in tool_names
     assert "sonar_extract" in tool_names
+    assert "sonar_find_papers" in tool_names
+    assert "sonar_prepare_paper_set" in tool_names
+    assert "sonar_collect_sources_for_topic" in tool_names
 
 
 def test_example_mcp_config_is_valid_json():
