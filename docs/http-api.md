@@ -24,6 +24,22 @@ Prepared bundle behavior:
 - Persisted bundles write `prepared_source_bundle.json` plus optional `source_XX.txt` files.
 - Low-level extraction is format-aware for HTML, PDF, DOCX, ODT, Markdown, and plain text.
 
+Synapse handoff:
+
+- Run `prepare-paper-set` or `collect-sources`.
+- Persist the returned bundle manifest.
+- Hand `prepared_source_bundle.json` to Synapse ingest.
+- Let Synapse handle indexing, compiled knowledge, and review.
+
+Compatibility contract:
+
+- `bundle_version = 1` is the current Sonar contract for Synapse-facing prepared bundles.
+- Synapse is expected to normalize from these core source fields:
+  `source_id`, `title`, `origin_url`, `direct_paper_url`, `authors`, `published`, `summary`,
+  `abstract`, `full_text`, `full_text_path`, `source_type`, `retrieved_at`,
+  `extraction_status`, and `extraction_method`.
+- Extra bundle metadata is allowed as long as those fields remain stable.
+
 Default bind:
 
 - host: `127.0.0.1`

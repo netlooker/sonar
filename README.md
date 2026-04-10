@@ -112,6 +112,18 @@ The low-level search/fetch/extract tools remain the canonical composable API.
 The paper-preparation tools collapse the retrieval loop for weaker local runtimes and return structured source bundles instead of requiring repeated orchestration.
 `prepare-paper-set` and `collect-sources` now auto-persist durable prepared bundles by default, including a JSON manifest and optional text sidecars for extracted source content.
 
+## Synapse Handoff
+
+The intended downstream flow stays:
+
+- call `prepare-paper-set` or `collect-sources`
+- persist the prepared bundle manifest
+- hand `prepared_source_bundle.json` to Synapse ingest
+- let Synapse own indexing, knowledge compile, and review
+
+For Synapse-facing prepared bundles, `bundle_version = 1` is the current compatibility contract.
+Synapse normalizes from the core prepared-source fields and tolerates extra metadata, so Sonar can keep adding non-breaking bundle details around that stable handoff surface.
+
 ## Docs
 
 - [Architecture](docs/architecture.md)

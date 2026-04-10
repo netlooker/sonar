@@ -18,6 +18,7 @@ Core responsibilities:
 - readable-text extraction across HTML, PDF, DOCX, ODT, Markdown, and text
 - metadata persistence for fetched documents and prepared-source bundle registries
 - durable prepared-source manifests for downstream handoff to note-writing and indexing systems
+- a stable prepared-bundle compatibility boundary for Synapse ingest via `bundle_version = 1`
 
 Design rules:
 

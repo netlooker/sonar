@@ -1,4 +1,5 @@
 import hashlib
+import json
 import io
 import zipfile
 from pathlib import Path
@@ -367,12 +368,33 @@ def test_prepare_paper_set_persists_bundle_and_merges_html_with_pdf(monkeypatch,
     )
 
     manifest = Path(response.bundle.bundle_path) / "prepared_source_bundle.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
     source = response.bundle.sources[0]
 
     assert response.selected_count == 1
     assert response.sources[0].source_id == source.source_id
     assert response.bundle.search_run_id == "run-2"
     assert manifest.exists()
+    assert payload["artifact_type"] == "prepared_source_bundle"
+    assert payload["bundle_version"] == 1
+    assert set(payload["sources"][0]).issuperset(
+        {
+            "source_id",
+            "title",
+            "origin_url",
+            "direct_paper_url",
+            "authors",
+            "published",
+            "summary",
+            "abstract",
+            "full_text",
+            "full_text_path",
+            "source_type",
+            "retrieved_at",
+            "extraction_status",
+            "extraction_method",
+        }
+    )
     assert source.extraction_method == "html+pdf"
     assert source.direct_paper_url == "https://arxiv.org/pdf/2401.00002.pdf"
     assert source.full_text_path is not None
