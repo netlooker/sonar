@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .bundles import build_bundle_id, build_request_fingerprint, persist_prepared_bundle
+from .embeddings import EmbeddingProvider, EmbeddingSettings, cosine_similarity
 from .errors import SonarBadRequestError, SonarError, SonarNotFoundError, SonarUpstreamUnavailableError
 from .extract import detect_source_format, extract_document, trafilatura_available
 from .fetch import fetch_url
@@ -745,33 +746,78 @@ def collect_sources_for_topic(
     if request.corpus not in SUPPORTED_CORPORA:
         supported = ", ".join(sorted(SUPPORTED_CORPORA))
         raise SonarBadRequestError(f"Corpus must be one of: {supported}.")
+    settings, db_path = resolve_runtime(request.config_path, request.db_path)
+    requested_count = _validate_requested_count(request.max_results, settings.search.max_limit)
+    candidate_pool_count = min(
+        settings.search.max_limit,
+        max(requested_count, requested_count * MAX_PREPARATION_SEARCH_MULTIPLIER),
+    )
     prepared = prepare_paper_set(
         PreparePaperSetRequest(
             query=request.topic,
             config_path=request.config_path,
             db_path=request.db_path,
-            count=request.max_results,
+            count=candidate_pool_count,
             profile=request.profile,
             direct_only=request.direct_only,
             force_refresh=request.force_refresh,
             include_full_text=request.include_full_text,
-            persist=request.persist,
+            persist=False,
             output_dir=request.output_dir,
             include_sidecars=request.include_sidecars,
         ),
         transport=transport,
     )
-    bundle = prepared.bundle.model_copy(update={"corpus": request.corpus})
+    warnings = list(prepared.warnings)
+    filtered_sources, relevance_warnings = _filter_topic_sources_by_relevance(
+        request.topic,
+        prepared.bundle.sources,
+        settings=settings,
+        transport=transport,
+    )
+    warnings.extend(relevance_warnings)
+    selected_sources = filtered_sources[:requested_count]
+    partial_results = prepared.partial_results or len(selected_sources) < requested_count
+    if len(filtered_sources) < len(prepared.bundle.sources):
+        warnings.append(
+            f"filtered out {len(prepared.bundle.sources) - len(filtered_sources)} low-relevance sources for topic search."
+        )
+    if len(selected_sources) < requested_count:
+        warnings.append(f"prepared {len(selected_sources)} sources out of {requested_count} requested.")
+
+    bundle = prepared.bundle.model_copy(
+        update={
+            "corpus": request.corpus,
+            "requested_count": requested_count,
+            "selected_count": len(selected_sources),
+            "partial_results": partial_results,
+            "warnings": warnings,
+            "sources": selected_sources,
+        }
+    )
+    if request.persist:
+        repo = Repository(db_path)
+        repo.initialize()
+        try:
+            persisted = persist_prepared_bundle(
+                bundle.model_dump(),
+                output_dir=request.output_dir,
+                include_sidecars=request.include_sidecars,
+                repo=repo,
+            )
+        finally:
+            repo.close()
+        bundle = PreparedSourceBundle.model_validate(persisted)
     return CollectSourcesForTopicResponse(
         topic=request.topic,
         corpus=request.corpus,
         profile=request.profile,
         direct_only=request.direct_only,
-        requested_count=request.max_results,
-        selected_count=prepared.selected_count,
-        partial_results=prepared.partial_results,
-        warnings=prepared.warnings,
-        sources=prepared.sources,
+        requested_count=requested_count,
+        selected_count=len(bundle.sources),
+        partial_results=bundle.partial_results,
+        warnings=bundle.warnings,
+        sources=[PreparedSource.model_validate(source.model_dump()) for source in bundle.sources],
         bundle=bundle,
     )
 
@@ -1224,3 +1270,63 @@ def _source_type_from_suffix(suffix: str) -> str:
 
 def _domain_matches(domain: str, candidates: set[str]) -> bool:
     return any(domain == candidate or domain.endswith(f".{candidate}") for candidate in candidates)
+
+
+def _filter_topic_sources_by_relevance(
+    topic: str,
+    sources: list[PreparedBundleSource],
+    *,
+    settings: AppSettings,
+    transport: httpx.BaseTransport | None,
+) -> tuple[list[PreparedBundleSource], list[str]]:
+    scored_inputs = [
+        (source, source.abstract or source.summary or source.search_snippet)
+        for source in sources
+        if (source.abstract or source.summary or source.search_snippet)
+    ]
+    if len(scored_inputs) < 2:
+        return sources, []
+    if not settings.embeddings.enabled or not settings.embeddings.model:
+        return sources, ["topic relevance filter skipped: embeddings provider is disabled."]
+
+    api_key = settings.embeddings.api_key
+    if not api_key and "api.openai.com" in settings.embeddings.base_url:
+        return sources, ["topic relevance filter skipped: embeddings API key is not configured."]
+
+    provider = EmbeddingProvider(
+        settings=EmbeddingSettings(
+            enabled=settings.embeddings.enabled,
+            base_url=settings.embeddings.base_url,
+            api_key=api_key,
+            model=settings.embeddings.model,
+            similarity_threshold=settings.embeddings.similarity_threshold,
+        ),
+        transport=transport,
+        timeout=settings.fetch.read_timeout_seconds,
+    )
+    try:
+        vectors = provider.embed([topic, *[text for _, text in scored_inputs]])
+    except SonarError as exc:
+        return sources, [f"topic relevance filter skipped: {exc.message}"]
+
+    query_vector = vectors[0]
+    scored_sources: list[tuple[PreparedBundleSource, float]] = []
+    scores_by_id: dict[str, float] = {}
+    for (source, _), vector in zip(scored_inputs, vectors[1:], strict=True):
+        similarity = cosine_similarity(query_vector, vector)
+        scores_by_id[source.source_id] = similarity
+        if similarity >= settings.embeddings.similarity_threshold:
+            scored_sources.append((source, similarity))
+
+    retained_ids = {source.source_id for source, _ in scored_sources}
+    missing_sources = [source for source in sources if source.source_id not in scores_by_id]
+    retained_sources = [source for source in sources if source.source_id in retained_ids]
+    retained_sources.extend(missing_sources)
+    retained_sources.sort(
+        key=lambda source: (
+            scores_by_id.get(source.source_id, settings.embeddings.similarity_threshold),
+            source.search_score,
+        ),
+        reverse=True,
+    )
+    return retained_sources, []

@@ -14,13 +14,25 @@ cp config/sonar.example.toml config/sonar.toml
 
 3. Adjust the SearxNG URL and database path.
 
-4. Run the API:
+4. If you plan to use `collect-sources` topic filtering, configure an embeddings API key:
+
+```bash
+export OPENAI_API_KEY=...
+```
+
+   Or:
+
+```bash
+export SONAR_EMBEDDINGS_API_KEY=...
+```
+
+5. Run the API:
 
 ```bash
 uv run sonar-api
 ```
 
-5. Or run the MCP server:
+6. Or run the MCP server:
 
 ```bash
 SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml uv run sonar-mcp
@@ -57,3 +69,8 @@ The compose stack mounts:
 - `config/sonar.compose.example.toml` into the Sonar container
 - `searxng/settings.yml` into the SearxNG container
 - a named volume for `/data/sonar.sqlite`
+
+## Notes
+
+- PDF extraction requires `pymupdf`, which is now part of Sonar's runtime dependencies.
+- `collect-sources` can run without embeddings, but semantic relevance filtering is skipped in that case and the response includes a warning.

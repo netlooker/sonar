@@ -16,6 +16,9 @@ def test_load_settings_reads_example_defaults():
     assert settings.cache.search_ttl_seconds == 900
     assert settings.cache.extract_ttl_seconds == 86400
     assert settings.fetch.max_body_bytes == 2097152
+    assert settings.embeddings.enabled is True
+    assert settings.embeddings.model == "text-embedding-3-small"
+    assert settings.embeddings.similarity_threshold == 0.35
     assert settings.domain_priors["docs.python.org"] == 0.35
 
 
@@ -51,11 +54,13 @@ def test_load_settings_applies_secret_overlay(tmp_path, monkeypatch):
 def test_load_settings_applies_env_overrides(monkeypatch):
     monkeypatch.setenv("SONAR_SEARXNG_BASE_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("SONAR_DB", "/tmp/sonar.sqlite")
+    monkeypatch.setenv("SONAR_TOPIC_RELEVANCE_THRESHOLD", "0.62")
 
     settings = load_settings("config/sonar.example.toml")
 
     assert settings.searxng.base_url == "http://127.0.0.1:9999"
     assert settings.database.path == "/tmp/sonar.sqlite"
+    assert settings.embeddings.similarity_threshold == 0.62
 
 
 def test_load_settings_prefers_project_config_location(tmp_path, monkeypatch):

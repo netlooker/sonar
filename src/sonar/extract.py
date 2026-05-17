@@ -136,36 +136,44 @@ def _extract_html_document(body: bytes, *, url: str) -> ExtractArtifact:
 
 def _extract_pdf_document(body: bytes, *, url: str) -> ExtractArtifact:
     try:
-        from pypdf import PdfReader
+        import pymupdf
     except ImportError as exc:  # pragma: no cover - installation path
         raise SonarDependencyError(
-            "pypdf is required for PDF extraction.",
-            dependency="pypdf",
+            "pymupdf is required for PDF extraction.",
+            dependency="pymupdf",
             retryable=False,
         ) from exc
 
-    reader = PdfReader(BytesIO(body))
-    texts = [(page.extract_text() or "").strip() for page in reader.pages]
-    text = "\n\n".join(chunk for chunk in texts if chunk)
-    if not text.strip():
-        raise SonarUpstreamUnavailableError("PDF extraction returned empty text.", retryable=False)
-    abstract = _extract_abstract_section(text)
-    title = _nullable_str(reader.metadata.title) if reader.metadata else None
-    byline = _nullable_str(reader.metadata.author) if reader.metadata else None
-    return ExtractArtifact(
-        canonical_url=url,
-        title=title,
-        byline=byline,
-        published_at=None,
-        language=None,
-        excerpt=_build_excerpt(text),
-        abstract=abstract,
-        text=text,
-        word_count=len(text.split()),
-        source_format="pdf",
-        extraction_method="pdf",
-        extraction_status=_extraction_status_for_text(text=text, title=title),
-    )
+    try:
+        document = pymupdf.open(stream=BytesIO(body), filetype="pdf")
+    except Exception as exc:
+        raise SonarUpstreamUnavailableError("PDF extraction failed.", retryable=False) from exc
+
+    try:
+        texts = [(page.get_text("text") or "").strip() for page in document]
+        text = "\n\n".join(chunk for chunk in texts if chunk)
+        if not text.strip():
+            raise SonarUpstreamUnavailableError("PDF extraction returned empty text.", retryable=False)
+        metadata = document.metadata or {}
+        abstract = _extract_abstract_section(text)
+        title = _nullable_str(metadata.get("title"))
+        byline = _nullable_str(metadata.get("author"))
+        return ExtractArtifact(
+            canonical_url=url,
+            title=title,
+            byline=byline,
+            published_at=None,
+            language=None,
+            excerpt=_build_excerpt(text),
+            abstract=abstract,
+            text=text,
+            word_count=len(text.split()),
+            source_format="pdf",
+            extraction_method="pdf",
+            extraction_status=_extraction_status_for_text(text=text, title=title),
+        )
+    finally:
+        document.close()
 
 
 def _extract_docx_document(body: bytes, *, url: str) -> ExtractArtifact:

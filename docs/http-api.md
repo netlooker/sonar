@@ -17,12 +17,16 @@ Route roles:
 - `search`, `fetch`, and `extract` remain the canonical low-level transport surface.
 - `find-papers`, `prepare-paper-set`, and `collect-sources` provide a higher-level facade for agent runtimes that struggle with multi-step retrieval orchestration.
 - `prepare-paper-set` and `collect-sources` return a first-class `bundle` object and persist durable prepared-source artifacts by default.
+- `collect-sources` performs an additional semantic relevance pass over collected results and removes low-similarity sources before returning the final bundle when embeddings are configured.
 
 Prepared bundle behavior:
 
 - High-level requests accept `persist`, `output_dir`, and `include_sidecars`.
 - Persisted bundles write `prepared_source_bundle.json` plus optional `source_XX.txt` files.
 - Low-level extraction is format-aware for HTML, PDF, DOCX, ODT, Markdown, and plain text.
+- PDF extraction uses `pymupdf`, and extracted PDF body text is preserved in `full_text` for prepared sources.
+- Topic collection scores each candidate against the original topic using embeddings derived from `abstract`, `summary`, or search snippet text.
+- If the embeddings provider is unavailable or unconfigured, topic collection continues without the semantic filter and returns a warning.
 
 Synapse handoff:
 

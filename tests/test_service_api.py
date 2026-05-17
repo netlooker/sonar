@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 import httpx
+import pymupdf
 import pytest
 
 from sonar.errors import SonarBadRequestError, SonarForbiddenError
@@ -236,6 +237,40 @@ def test_extract_document_supports_docx(tmp_path):
     assert response.source_format == "docx"
     assert response.extraction_method == "docx"
     assert "Structured document body." in response.text
+
+
+def test_extract_document_supports_pdf(tmp_path):
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "PDF Title")
+    page.insert_text((72, 108), "Abstract")
+    page.insert_text((72, 144), "This PDF body should be extracted.")
+    pdf.set_metadata({"title": "PDF Title", "author": "Alice Example"})
+    document_bytes = pdf.tobytes()
+    pdf.close()
+
+    response = extract_document_record(
+        ExtractRequest(
+            url="https://example.com/paper.pdf",
+            config_path="config/sonar.example.toml",
+            db_path=str(tmp_path / "sonar.sqlite"),
+        ),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text="User-agent: *\nAllow: /\n")
+            if request.url.path == "/robots.txt"
+            else httpx.Response(
+                200,
+                content=document_bytes,
+                headers={"content-type": "application/pdf"},
+            )
+        ),
+    )
+
+    assert response.source_format == "pdf"
+    assert response.extraction_method == "pdf"
+    assert response.title == "PDF Title"
+    assert response.byline == "Alice Example"
+    assert "This PDF body should be extracted." in response.text
 
 
 def test_find_papers_prefers_direct_scientific_results(monkeypatch, tmp_path):
@@ -567,6 +602,95 @@ def test_collect_sources_for_topic_maps_to_prepared_set(monkeypatch):
     assert response.corpus == "papers"
     assert response.bundle.bundle_id == "bundle-1"
     assert response.sources[0].title == "Graph retrieval paper"
+
+
+def test_collect_sources_for_topic_filters_low_relevance_results(monkeypatch):
+    monkeypatch.setenv("SONAR_EMBEDDINGS_API_KEY", "test-key")
+
+    bundle = PreparedSourceBundle(
+        bundle_id="bundle-1",
+        created_at=1.0,
+        request_fingerprint="fingerprint",
+        query="llm prompting",
+        corpus="papers",
+        profile="scientific",
+        direct_only=True,
+        requested_count=4,
+        selected_count=2,
+        partial_results=False,
+        warnings=[],
+        search_run_id="run-1",
+        sources=[
+            PreparedBundleSource(
+                source_id="source-1",
+                title="Prompt engineering for LLMs",
+                origin_url="https://arxiv.org/abs/2402.00001",
+                url="https://arxiv.org/abs/2402.00001",
+                summary="Prompting strategies for large language models.",
+                abstract="Techniques for prompt engineering with large language models.",
+                selection_reason="direct paper page",
+                confidence=0.9,
+                source_type="paper_landing_page",
+                search_score=1.2,
+                search_snippet="prompting paper",
+                retrieved_at=1.0,
+            ),
+            PreparedBundleSource(
+                source_id="source-2",
+                title="Protein sequence alignment",
+                origin_url="https://example.org/bio-paper",
+                url="https://example.org/bio-paper",
+                summary="Bioinformatics methods for protein sequence alignment.",
+                abstract="A bioinformatics paper unrelated to language model prompting.",
+                selection_reason="direct paper page",
+                confidence=0.8,
+                source_type="paper_landing_page",
+                search_score=1.1,
+                search_snippet="bioinformatics paper",
+                retrieved_at=1.0,
+            ),
+        ],
+    )
+    prepared = PreparePaperSetResponse(
+        query="llm prompting",
+        profile="scientific",
+        direct_only=True,
+        requested_count=4,
+        selected_count=2,
+        partial_results=False,
+        warnings=[],
+        sources=[PreparedBundleSource.model_validate(source.model_dump()) for source in bundle.sources],
+        bundle=bundle,
+    )
+
+    monkeypatch.setattr("sonar.service_api.prepare_paper_set", lambda request, transport=None: prepared)
+
+    class FakeEmbeddingProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def embed(self, inputs: list[str]) -> list[list[float]]:
+            assert inputs[0] == "llm prompting"
+            return [
+                [1.0, 0.0],
+                [0.98, 0.05],
+                [0.05, 0.99],
+            ]
+
+    monkeypatch.setattr("sonar.service_api.EmbeddingProvider", FakeEmbeddingProvider)
+
+    response = collect_sources_for_topic(
+        CollectSourcesForTopicRequest(
+            topic="llm prompting",
+            max_results=2,
+            persist=False,
+            config_path="config/sonar.example.toml",
+        )
+    )
+
+    assert response.selected_count == 1
+    assert [source.title for source in response.sources] == ["Prompt engineering for LLMs"]
+    assert any("filtered out 1 low-relevance sources" in warning for warning in response.warnings)
 
 
 def _build_zip_document(member: str, content: str) -> bytes:

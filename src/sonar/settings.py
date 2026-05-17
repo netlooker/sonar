@@ -17,6 +17,9 @@ DEFAULT_CONFIG_PATHS = (
 )
 DEFAULT_DB_PATH = "~/.sonar/sonar.sqlite"
 DEFAULT_SEARXNG_URL = "http://127.0.0.1:8080"
+DEFAULT_EMBEDDINGS_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_EMBEDDINGS_MODEL = "text-embedding-3-small"
+DEFAULT_TOPIC_RELEVANCE_THRESHOLD = 0.35
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,15 @@ class SearchSettings:
 
 
 @dataclass(frozen=True)
+class EmbeddingsSettings:
+    enabled: bool = True
+    base_url: str = DEFAULT_EMBEDDINGS_BASE_URL
+    api_key: str | None = None
+    model: str = DEFAULT_EMBEDDINGS_MODEL
+    similarity_threshold: float = DEFAULT_TOPIC_RELEVANCE_THRESHOLD
+
+
+@dataclass(frozen=True)
 class SecretsSettings:
     overlay_path: str | None = "secrets/sonar.secrets.toml"
 
@@ -80,6 +92,7 @@ class AppSettings:
     cache: CacheSettings = field(default_factory=CacheSettings)
     fetch: FetchSettings = field(default_factory=FetchSettings)
     search: SearchSettings = field(default_factory=SearchSettings)
+    embeddings: EmbeddingsSettings = field(default_factory=EmbeddingsSettings)
     secrets: SecretsSettings = field(default_factory=SecretsSettings)
     domain_priors: dict[str, float] = field(default_factory=dict)
 
@@ -169,6 +182,28 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
                 os.environ.get(
                     "SONAR_MAX_LIMIT",
                     merged.get("search", {}).get("max_limit", 20),
+                )
+            ),
+        ),
+        embeddings=EmbeddingsSettings(
+            enabled=str(os.environ.get("SONAR_EMBEDDINGS_ENABLED", merged.get("embeddings", {}).get("enabled", True))).lower()
+            not in {"0", "false", "no", "off"},
+            base_url=os.environ.get(
+                "SONAR_EMBEDDINGS_BASE_URL",
+                merged.get("embeddings", {}).get("base_url", DEFAULT_EMBEDDINGS_BASE_URL),
+            ),
+            api_key=os.environ.get(
+                "SONAR_EMBEDDINGS_API_KEY",
+                os.environ.get("OPENAI_API_KEY", merged.get("embeddings", {}).get("api_key")),
+            ),
+            model=os.environ.get(
+                "SONAR_EMBEDDINGS_MODEL",
+                merged.get("embeddings", {}).get("model", DEFAULT_EMBEDDINGS_MODEL),
+            ),
+            similarity_threshold=float(
+                os.environ.get(
+                    "SONAR_TOPIC_RELEVANCE_THRESHOLD",
+                    merged.get("embeddings", {}).get("similarity_threshold", DEFAULT_TOPIC_RELEVANCE_THRESHOLD),
                 )
             ),
         ),

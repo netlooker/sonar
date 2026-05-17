@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonar"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic live-web search, fetch, and extraction service for agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27,<1.0",
     "pydantic>=2.10,<3.0",
-    "pypdf>=5.4,<6.0",
+    "pymupdf>=1.26,<2.0",
     "trafilatura>=1.12,<2.0",
 ]
 

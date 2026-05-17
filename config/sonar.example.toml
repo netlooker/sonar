@@ -23,6 +23,12 @@ user_agent = "Sonar/0.1"
 default_limit = 8
 max_limit = 20
 
+[embeddings]
+enabled = true
+base_url = "https://api.openai.com/v1"
+model = "text-embedding-3-small"
+similarity_threshold = 0.35
+
 [ranking.domain_priors]
 "docs.python.org" = 0.35
 "wikipedia.org" = 0.10
