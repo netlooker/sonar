@@ -38,7 +38,7 @@ def build_server():
     mcp = FastMCP(
         "Sonar",
         instructions=(
-            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions and durable prepared-source bundles."
+            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions and durable prepared-source bundles. PDF extraction is first-class, and topic collection can semantically prune low-relevance results when embeddings are configured."
         ),
         json_response=True,
     )
@@ -89,7 +89,7 @@ def build_server():
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_extract", description="Extract readable text from one cached or live URL")
+    @mcp.tool(name="sonar_extract", description="Extract readable text from one cached or live URL, including PDF content into full extracted text")
     def sonar_extract(
         url: str | None = None,
         document_id: str | None = None,
@@ -159,7 +159,7 @@ def build_server():
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_collect_sources_for_topic", description="Collect a compact structured source bundle for a topic")
+    @mcp.tool(name="sonar_collect_sources_for_topic", description="Collect a compact structured source bundle for a topic, with semantic relevance pruning when embeddings are configured")
     def sonar_collect_sources_for_topic(
         topic: str,
         config_path: str | None = None,

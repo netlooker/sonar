@@ -4,7 +4,7 @@
     "title": "Sonar API",
     "summary": "HTTP and OpenAPI interface for deterministic live-web evidence.",
     "description": "Expose Sonar search, fetch, multi-format extraction, prepared paper sets, durable prepared-source bundles, and runtime readiness over JSON/HTTP.",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "paths": {
     "/health": {
