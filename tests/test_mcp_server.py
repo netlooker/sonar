@@ -1,10 +1,19 @@
+import asyncio
 import json
+import os
 from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
 
 import pytest
 
 mcp = pytest.importorskip("mcp")
 
+from mcp import ClientSession, StdioServerParameters  # noqa: E402
+from mcp.client.stdio import stdio_client  # noqa: E402
+from mcp.client.streamable_http import streamable_http_client  # noqa: E402
 from sonar.mcp_server import _require_server_config, build_server, runtime_requirements  # noqa: E402
 from sonar.service_api import (  # noqa: E402
     CollectSourcesForTopicResponse,
@@ -51,6 +60,76 @@ def test_build_server_applies_streamable_http_settings():
     assert server.settings.port == 8123
     assert server.settings.streamable_http_path == "/custom-mcp"
     assert server.settings.stateless_http is False
+
+
+def test_stdio_transport_lists_real_server_tools():
+    async def list_tools():
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", "from sonar.mcp_server import main; main()"],
+            env={
+                **os.environ,
+                "SONAR_CONFIG": str(Path("config/sonar.example.toml").resolve()),
+                "SONAR_MCP_TRANSPORT": "stdio",
+            },
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                return [tool.name for tool in (await session.list_tools()).tools]
+
+    assert asyncio.run(list_tools()) == [
+        "health",
+        "search",
+        "fetch",
+        "scrape",
+        "extract",
+        "find_papers",
+        "prepare_paper_set",
+        "collect_sources_for_topic",
+    ]
+
+
+def test_streamable_http_transport_lists_real_server_tools():
+    port = _unused_tcp_port()
+    env = {
+        **os.environ,
+        "SONAR_CONFIG": str(Path("config/sonar.example.toml").resolve()),
+        "SONAR_MCP_TRANSPORT": "streamable-http",
+        "SONAR_MCP_HOST": "127.0.0.1",
+        "SONAR_MCP_PORT": str(port),
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-c", "from sonar.mcp_server import main; main()"],
+        cwd=Path.cwd(),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_tcp_port(port, process)
+
+        async def list_tools():
+            async with streamable_http_client(f"http://127.0.0.1:{port}/mcp") as (
+                read,
+                write,
+                _,
+            ):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    return [tool.name for tool in (await session.list_tools()).tools]
+
+        names = asyncio.run(list_tools())
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    assert "scrape" in names
+    assert "sonar_scrape" not in names
 
 
 def test_mcp_tool_descriptions_reflect_pdf_and_topic_filtering():
@@ -287,3 +366,22 @@ def test_collect_sources_tool_wraps_semantic_topic_collection(monkeypatch):
     assert captured["request"].persist is False
     assert result["selected_count"] == 1
     assert "low-relevance sources" in result["warnings"][0]
+
+
+def _unused_tcp_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_tcp_port(port: int, process: subprocess.Popen) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail(f"sonar-mcp exited with status {process.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    pytest.fail("sonar-mcp did not start its Streamable HTTP listener")

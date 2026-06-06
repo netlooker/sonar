@@ -9,6 +9,12 @@ import pymupdf
 import pytest
 
 from sonar.errors import SonarBadRequestError, SonarForbiddenError
+from sonar.retrieval.models import (
+    FallbackReason,
+    RetrievalArtifact,
+    RetrievalAttempt,
+    RetrievalBackend,
+)
 from sonar.service_api import (
     CollectSourcesForTopicRequest,
     ExtractRequest,
@@ -271,6 +277,104 @@ def test_extract_document_uses_cached_text(tmp_path):
     assert calls["page"] == 1
 
 
+def test_extract_force_refresh_bypasses_cached_text_and_body(tmp_path):
+    calls = {"page": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        calls["page"] += 1
+        return httpx.Response(
+            200,
+            text=(
+                "<html><body><article><p>"
+                + (f"version {calls['page']} useful content " * 50)
+                + "</p></article></body></html>"
+            ),
+            headers={"content-type": "text/html"},
+        )
+
+    request = ExtractRequest(
+        url="https://example.com/page",
+        config_path="config/sonar.example.toml",
+        db_path=str(tmp_path / "sonar.sqlite"),
+    )
+    transport = httpx.MockTransport(handler)
+
+    first = extract_document_record(request, transport=transport)
+    cached = extract_document_record(request, transport=transport)
+    refreshed = extract_document_record(
+        request.model_copy(update={"force_refresh": True}), transport=transport
+    )
+
+    assert calls["page"] == 2
+    assert first.from_cache is False
+    assert cached.from_cache is True
+    assert refreshed.from_cache is False
+    assert first.text != refreshed.text
+
+
+def test_extract_persists_and_reuses_retrieval_provenance(monkeypatch, tmp_path):
+    attempts = (
+        RetrievalAttempt(
+            backend=RetrievalBackend.HTTP,
+            outcome="retrieved",
+            status_code=200,
+            fallback_reason=FallbackReason.THIN_TEXT,
+        ),
+        RetrievalAttempt(
+            backend=RetrievalBackend.CLOAKBROWSER,
+            outcome="retrieved",
+            status_code=200,
+            rendered=True,
+        ),
+    )
+    artifact = RetrievalArtifact(
+        url="https://example.com/app",
+        final_url="https://example.com/app",
+        status="fetched",
+        status_code=200,
+        content_type="text/html",
+        body=(
+            "<html><body><article><p>"
+            + ("Rendered useful article content. " * 50)
+            + "</p></article></body></html>"
+        ).encode(),
+        extractable=True,
+        source_format="html",
+        backend=RetrievalBackend.CLOAKBROWSER,
+        rendered=True,
+        attempts=attempts,
+        warnings=("thin_text_triggered_cloakbrowser_fallback",),
+        fallback_reason=FallbackReason.THIN_TEXT,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "sonar.service_api.retrieve_url",
+        lambda **kwargs: calls.append(kwargs["url"]) or artifact,
+    )
+    request = ExtractRequest(
+        url=artifact.url,
+        config_path="config/sonar.example.toml",
+        db_path=str(tmp_path / "sonar.sqlite"),
+    )
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(500))
+    first = extract_document_record(request, transport=transport)
+    cached = extract_document_record(request, transport=transport)
+
+    assert calls == [artifact.url]
+    assert cached.from_cache is True
+    for response in (first, cached):
+        assert response.retrieval_backend == "cloakbrowser"
+        assert response.rendered is True
+        assert response.retrieval_attempts == ["http", "cloakbrowser"]
+        assert response.retrieval_warnings == [
+            "thin_text_triggered_cloakbrowser_fallback"
+        ]
+        assert response.fallback_reason == "thin_text"
+
+
 def test_extract_document_supports_plain_text(tmp_path):
     response = extract_document_record(
         ExtractRequest(
@@ -474,6 +578,8 @@ def test_prepare_paper_set_persists_bundle_and_merges_html_with_pdf(
             source_format="html",
             extraction_method="html",
             extraction_status="partial",
+            retrieval_backend="http",
+            retrieval_warnings=["landing_warning"],
             from_cache=False,
         ),
         "https://arxiv.org/pdf/2401.00002.pdf": ExtractResponse(
@@ -490,6 +596,11 @@ def test_prepare_paper_set_persists_bundle_and_merges_html_with_pdf(
             source_format="pdf",
             extraction_method="pdf",
             extraction_status="full",
+            retrieval_backend="cloakbrowser",
+            rendered=True,
+            retrieval_attempts=["http", "cloakbrowser"],
+            retrieval_warnings=["pdf_warning"],
+            fallback_reason="thin_text",
             from_cache=True,
         ),
     }
@@ -544,6 +655,11 @@ def test_prepare_paper_set_persists_bundle_and_merges_html_with_pdf(
     assert source.direct_paper_url == "https://arxiv.org/pdf/2401.00002.pdf"
     assert source.full_text_path is not None
     assert Path(source.full_text_path).exists()
+    assert source.retrieval_backend == "cloakbrowser"
+    assert source.rendered is True
+    assert source.retrieval_attempts == ["http", "cloakbrowser"]
+    assert source.retrieval_warnings == ["landing_warning", "pdf_warning"]
+    assert source.fallback_reason == "thin_text"
 
 
 def test_prepare_paper_set_includes_direct_pdf_candidate(monkeypatch, tmp_path):
