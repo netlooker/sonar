@@ -50,6 +50,11 @@ class SonarNotFoundError(SonarError):
     error_type = "not_found"
 
 
+class SonarBodyTooLargeError(SonarError):
+    status_code = 413
+    error_type = "body_too_large"
+
+
 class SonarDependencyError(SonarError):
     status_code = 424
     error_type = "dependency_unavailable"
@@ -60,6 +65,10 @@ class SonarUpstreamUnavailableError(SonarError):
     status_code = 503
     error_type = "upstream_unavailable"
     retryable = True
+
+
+class SonarRobotsUnavailableError(SonarUpstreamUnavailableError):
+    error_type = "robots_unavailable"
 
 
 class SonarTimeoutError(SonarError):

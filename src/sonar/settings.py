@@ -55,7 +55,28 @@ class FetchSettings:
     connect_timeout_seconds: float = 10.0
     read_timeout_seconds: float = 20.0
     max_body_bytes: int = 2 * 1024 * 1024
-    user_agent: str = "Sonar/0.1"
+    user_agent: str = "Sonar/0.3"
+
+
+@dataclass(frozen=True)
+class RetrievalSettings:
+    scrapling_enabled: bool = False
+    browser_enabled: bool = False
+    cloakbrowser_enabled: bool = False
+    thin_text_min_chars: int = 200
+    browser_wait_until: str = "domcontentloaded"
+
+
+@dataclass(frozen=True)
+class PolicySettings:
+    respect_robots: bool = True
+    deny_local_networks: bool = True
+
+
+@dataclass(frozen=True)
+class DomainPolicySettings:
+    allow: bool | None = None
+    allowed_backends: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -91,10 +112,13 @@ class AppSettings:
     http: HttpSettings = field(default_factory=HttpSettings)
     cache: CacheSettings = field(default_factory=CacheSettings)
     fetch: FetchSettings = field(default_factory=FetchSettings)
+    retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
+    policy: PolicySettings = field(default_factory=PolicySettings)
     search: SearchSettings = field(default_factory=SearchSettings)
     embeddings: EmbeddingsSettings = field(default_factory=EmbeddingsSettings)
     secrets: SecretsSettings = field(default_factory=SecretsSettings)
     domain_priors: dict[str, float] = field(default_factory=dict)
+    domains: dict[str, DomainPolicySettings] = field(default_factory=dict)
 
 
 def load_settings(config_path: str | Path | None = None) -> AppSettings:
@@ -126,8 +150,14 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
             )
         ),
         http=HttpSettings(
-            host=os.environ.get("SONAR_HTTP_HOST", merged.get("http", {}).get("host", "127.0.0.1")),
-            port=int(os.environ.get("SONAR_HTTP_PORT", merged.get("http", {}).get("port", 8001))),
+            host=os.environ.get(
+                "SONAR_HTTP_HOST", merged.get("http", {}).get("host", "127.0.0.1")
+            ),
+            port=int(
+                os.environ.get(
+                    "SONAR_HTTP_PORT", merged.get("http", {}).get("port", 8001)
+                )
+            ),
             auth_mode=os.environ.get(
                 "SONAR_HTTP_AUTH_MODE",
                 merged.get("http", {}).get("auth_mode", "none"),
@@ -168,7 +198,43 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
             ),
             user_agent=os.environ.get(
                 "SONAR_USER_AGENT",
-                merged.get("fetch", {}).get("user_agent", "Sonar/0.1"),
+                merged.get("fetch", {}).get("user_agent", "Sonar/0.3"),
+            ),
+        ),
+        retrieval=RetrievalSettings(
+            scrapling_enabled=_env_bool(
+                "SONAR_SCRAPLING_ENABLED",
+                merged.get("retrieval", {}).get("scrapling_enabled", False),
+            ),
+            browser_enabled=_env_bool(
+                "SONAR_BROWSER_ENABLED",
+                merged.get("retrieval", {}).get("browser_enabled", False),
+            ),
+            cloakbrowser_enabled=_env_bool(
+                "SONAR_CLOAKBROWSER_ENABLED",
+                merged.get("retrieval", {}).get("cloakbrowser_enabled", False),
+            ),
+            thin_text_min_chars=int(
+                os.environ.get(
+                    "SONAR_THIN_TEXT_MIN_CHARS",
+                    merged.get("retrieval", {}).get("thin_text_min_chars", 200),
+                )
+            ),
+            browser_wait_until=os.environ.get(
+                "SONAR_BROWSER_WAIT_UNTIL",
+                merged.get("retrieval", {}).get(
+                    "browser_wait_until", "domcontentloaded"
+                ),
+            ),
+        ),
+        policy=PolicySettings(
+            respect_robots=_env_bool(
+                "SONAR_RESPECT_ROBOTS",
+                merged.get("policy", {}).get("respect_robots", True),
+            ),
+            deny_local_networks=_env_bool(
+                "SONAR_DENY_LOCAL_NETWORKS",
+                merged.get("policy", {}).get("deny_local_networks", True),
             ),
         ),
         search=SearchSettings(
@@ -186,15 +252,24 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
             ),
         ),
         embeddings=EmbeddingsSettings(
-            enabled=str(os.environ.get("SONAR_EMBEDDINGS_ENABLED", merged.get("embeddings", {}).get("enabled", True))).lower()
+            enabled=str(
+                os.environ.get(
+                    "SONAR_EMBEDDINGS_ENABLED",
+                    merged.get("embeddings", {}).get("enabled", True),
+                )
+            ).lower()
             not in {"0", "false", "no", "off"},
             base_url=os.environ.get(
                 "SONAR_EMBEDDINGS_BASE_URL",
-                merged.get("embeddings", {}).get("base_url", DEFAULT_EMBEDDINGS_BASE_URL),
+                merged.get("embeddings", {}).get(
+                    "base_url", DEFAULT_EMBEDDINGS_BASE_URL
+                ),
             ),
             api_key=os.environ.get(
                 "SONAR_EMBEDDINGS_API_KEY",
-                os.environ.get("OPENAI_API_KEY", merged.get("embeddings", {}).get("api_key")),
+                os.environ.get(
+                    "OPENAI_API_KEY", merged.get("embeddings", {}).get("api_key")
+                ),
             ),
             model=os.environ.get(
                 "SONAR_EMBEDDINGS_MODEL",
@@ -203,19 +278,34 @@ def load_settings(config_path: str | Path | None = None) -> AppSettings:
             similarity_threshold=float(
                 os.environ.get(
                     "SONAR_TOPIC_RELEVANCE_THRESHOLD",
-                    merged.get("embeddings", {}).get("similarity_threshold", DEFAULT_TOPIC_RELEVANCE_THRESHOLD),
+                    merged.get("embeddings", {}).get(
+                        "similarity_threshold", DEFAULT_TOPIC_RELEVANCE_THRESHOLD
+                    ),
                 )
             ),
         ),
         secrets=SecretsSettings(
             overlay_path=os.environ.get(
                 "SONAR_SECRETS_FILE",
-                merged.get("secrets", {}).get("overlay_path", "secrets/sonar.secrets.toml"),
+                merged.get("secrets", {}).get(
+                    "overlay_path", "secrets/sonar.secrets.toml"
+                ),
             )
         ),
         domain_priors={
             domain: float(weight)
-            for domain, weight in merged.get("ranking", {}).get("domain_priors", {}).items()
+            for domain, weight in merged.get("ranking", {})
+            .get("domain_priors", {})
+            .items()
+        },
+        domains={
+            str(domain).lower(): DomainPolicySettings(
+                allow=value.get("allow"),
+                allowed_backends=tuple(str(item) for item in value["allowed_backends"])
+                if value.get("allowed_backends")
+                else None,
+            )
+            for domain, value in merged.get("domains", {}).items()
         },
     )
     return settings
@@ -264,3 +354,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             result[key] = value
     return result
+
+
+def _env_bool(name: str, default: object) -> bool:
+    return str(os.environ.get(name, default)).lower() not in {"0", "false", "no", "off"}

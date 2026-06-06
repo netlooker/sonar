@@ -1,17 +1,17 @@
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from sonar.errors import SonarForbiddenError
-from sonar.service_api import (
+from sonar.errors import SonarForbiddenError  # noqa: E402
+from sonar.service_api import (  # noqa: E402
     PreparePaperSetResponse,
     PreparedBundleSource,
     PreparedSourceBundle,
     SearchResponse,
     SearchResult,
 )
-from sonar.web_api import create_app
+from sonar.web_api import create_app  # noqa: E402
 
 
 def test_openapi_exposes_sonar_routes():
@@ -33,7 +33,13 @@ def test_openapi_exposes_sonar_routes():
 def test_health_endpoint_reports_runtime(tmp_path):
     client = TestClient(create_app())
 
-    response = client.get("/health", params={"config_path": "config/sonar.example.toml", "db_path": str(tmp_path / "sonar.sqlite")})
+    response = client.get(
+        "/health",
+        params={
+            "config_path": "config/sonar.example.toml",
+            "db_path": str(tmp_path / "sonar.sqlite"),
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["database_path"] == str(tmp_path / "sonar.sqlite")

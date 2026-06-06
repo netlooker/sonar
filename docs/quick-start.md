@@ -38,9 +38,35 @@ uv run sonar-api
 SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml uv run sonar-mcp
 ```
 
+For remote MCP clients, run Streamable HTTP:
+
+```bash
+SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml \
+SONAR_MCP_TRANSPORT=streamable-http \
+SONAR_MCP_HOST=0.0.0.0 \
+uv run sonar-mcp
+```
+
+The endpoint is `http://HOST:8000/mcp` by default.
+
+## Optional Resilient Retrieval
+
+The default install and image keep the normal HTTP fast path and do not include
+browser dependencies. Enable optional backends only when needed:
+
+```bash
+uv sync --extra dev --extra resilient --extra browser
+```
+
+Then set `retrieval.scrapling_enabled = true` and, for rendered fallback, both
+`retrieval.browser_enabled = true` and
+`retrieval.cloakbrowser_enabled = true`. If an enabled optional backend is not
+installed, Sonar records that failed attempt and retains the best usable prior
+result. Policy and robots denials remain terminal.
+
 ## Container Build
 
-Build:
+Build the lightweight API image:
 
 ```bash
 docker build -t sonar:latest .
@@ -55,6 +81,16 @@ docker run --rm -p 8001:8001 \
   -v sonar-data:/data \
   sonar:latest
 ```
+
+Build the browser-capable Streamable HTTP MCP target:
+
+```bash
+docker build --target browser-runtime -t sonar:browser .
+docker run --rm -p 8000:8000 -v sonar-data:/data sonar:browser
+```
+
+The browser target pins the published CloakBrowser multi-architecture image
+digest used for this release.
 
 ## Compose Stack
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonar"
-version = "0.2.1"
+version = "0.3.0"
 description = "Deterministic live-web search, fetch, and extraction service for agents"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,6 +22,13 @@ api = [
 ]
 mcp = [
     "mcp[cli]>=1.26,<2.0",
+]
+resilient = [
+    "scrapling[fetchers]>=0.3.2,<1.0",
+]
+browser = [
+    "cloakbrowser>=0.3,<1.0",
+    "playwright>=1.45,<2.0",
 ]
 dev = [
     "pytest>=8.3,<10.0",

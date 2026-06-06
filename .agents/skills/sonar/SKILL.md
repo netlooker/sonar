@@ -23,10 +23,10 @@ Recent Sonar behavior that matters operationally:
 
 | Tool | Purpose | Key params |
 |------|---------|------------|
-| `sonar_health` | Check runtime readiness | `config_path`, `db_path` |
+| `sonar_health` | Check runtime readiness | none |
 | `sonar_search` | Search the live web and return ranked evidence | `query`, `limit`, `freshness`, `engines`, `categories`, `language`, `force_refresh` |
 | `sonar_fetch` | Fetch one URL and cache its metadata | `url`, `force_refresh` |
-| `sonar_extract` | Extract readable text from a URL or cached document | `url` or `document_id`, `force_refresh` |
+| `sonar_extract` | Extract readable text from a URL or cached document | `url` or `document_id`, `force_refresh`, `include_text`, `max_chars` |
 | `sonar_find_papers` | Return curated scientific paper candidates for a topic | `query`, `count`, `profile` |
 | `sonar_prepare_paper_set` | Search, filter, and extract a prepared scientific paper set in one call | `query`, `count`, `profile`, `direct_only` |
 | `sonar_collect_sources_for_topic` | Return a compact structured source bundle for a topic | `topic`, `max_results`, `corpus` |
@@ -56,13 +56,14 @@ Preferred read order for weaker local models:
 
 ### Manual flow
 
-1. `sonar_health`
-2. `sonar_search`
-3. `sonar_fetch`
-4. `sonar_extract`
+1. `sonar_search`
+2. Select only the relevant result URLs
+3. `sonar_extract` those selected URLs
 
-Do not extract every search result. Narrow first, then extract only what you
-need.
+`sonar_extract` performs retrieval itself and does not require a preceding
+`sonar_fetch` call. Use `sonar_fetch` only when you specifically need response
+status, content type, redirect metadata, or cache warming. Use `sonar_health`
+for diagnostics rather than normal research.
 
 ## Practical patterns
 
@@ -122,6 +123,9 @@ Key config sections:
 - `[database]`: SQLite path
 - `[cache]`: TTLs for search and extract results
 - `[fetch]`: timeouts, max body size, user agent
+- `[retrieval]`: optional Scrapling and browser fallback behavior
+- `[policy]`: robots and local-network retrieval policy
+- `[domains]`: optional per-domain and per-backend policy overrides
 - `[search]`: default and max result limits
 - `[embeddings]`: semantic topic-filter provider settings for `sonar_collect_sources_for_topic`
 - `[ranking.domain_priors]`: per-domain score bonuses
