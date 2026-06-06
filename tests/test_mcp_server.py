@@ -32,6 +32,7 @@ def test_build_server_lists_expected_tools():
         "search",
         "fetch",
         "extract",
+        "scrape",
         "find_papers",
         "prepare_paper_set",
         "collect_sources_for_topic",
@@ -56,7 +57,7 @@ def test_mcp_tool_descriptions_reflect_pdf_and_topic_filtering():
     server = build_server()
     tools = server._tool_manager._tools
 
-    assert "PDF" in tools["extract"].description
+    assert "known URL" in tools["scrape"].description
     assert (
         "semantic relevance pruning" in tools["collect_sources_for_topic"].description
     )
@@ -151,6 +152,38 @@ def test_extract_tool_compacts_text_without_changing_word_count(monkeypatch):
     assert result["text"] == "abcd\n...[truncated]"
     assert result["word_count"] == 1
     assert "mcp_text_truncated" in result["retrieval_warnings"]
+
+
+def test_scrape_tool_requires_url_and_reuses_extract_service(monkeypatch):
+    server = build_server()
+    captured = {}
+
+    def fake_extract_document_record(request):
+        captured["request"] = request
+        return ExtractResponse(
+            document_id="doc",
+            canonical_url=request.url,
+            text="scraped text",
+            word_count=2,
+            retrieval_backend="cloakbrowser",
+            rendered=True,
+            from_cache=False,
+        )
+
+    monkeypatch.setattr(
+        "sonar.mcp_server.extract_document_record", fake_extract_document_record
+    )
+
+    tool = server._tool_manager._tools["scrape"]
+    result = tool.fn(url="https://example.com/app", force_refresh=True)
+
+    assert set(tool.parameters["required"]) == {"url"}
+    assert captured["request"].url == "https://example.com/app"
+    assert captured["request"].document_id is None
+    assert captured["request"].force_refresh is True
+    assert result["text"] == "scraped text"
+    assert result["retrieval_backend"] == "cloakbrowser"
+    assert result["rendered"] is True
 
 
 def test_unprefixed_paper_tools_call_service_functions(monkeypatch):

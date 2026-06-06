@@ -14,7 +14,7 @@
 
 Verified Sonar gates:
 
-- 76 automated tests pass;
+- 77 automated tests pass;
 - changed Python files pass Ruff lint and formatting checks;
 - lock verification, bytecode compilation, package build, and diff checks pass;
 - stdio and Streamable HTTP MCP smokes pass;
@@ -468,6 +468,7 @@ health
 search
 fetch
 extract
+scrape
 find_papers
 prepare_paper_set
 collect_sources_for_topic
@@ -480,6 +481,7 @@ sonar_health
 sonar_search
 sonar_fetch
 sonar_extract
+sonar_scrape
 sonar_find_papers
 sonar_prepare_paper_set
 sonar_collect_sources_for_topic
@@ -511,20 +513,24 @@ Retain agent-relevant controls:
 Rewrite descriptions and the Sonar skill around:
 
 ```text
-search -> extract selected URLs
+known URL -> scrape
+discovery -> search -> scrape selected URLs
 ```
 
 Guidance:
 
-- `extract` is the normal way to retrieve readable content; no prior fetch call
-  is required.
-- `fetch` is a metadata/probe operation and usually should not precede extract.
+- `scrape` is the simple one-call way to retrieve readable content from a known
+  URL; no prior search or fetch call is required.
+- `extract` remains available for cached document IDs and URL-based extraction.
+- `fetch` is a metadata/probe operation and usually should not precede scrape
+  or extract.
 - `health` is operational and should not be called during normal research.
 - high-level tools replace manual loops when their domain-specific behavior fits.
 
 ### MCP Response Size
 
-Add MCP-adapter-only `include_text` and bounded `max_chars` controls to `extract`.
+Add MCP-adapter-only `include_text` and bounded `max_chars` controls to `scrape`
+and `extract`.
 
 - Persist complete extracted content regardless of MCP response truncation.
 - Return document ID, provenance, extraction status, and full word count.
@@ -689,6 +695,7 @@ Deliverables:
 
 - Rename raw MCP tools.
 - Remove operator-only MCP parameters.
+- Add the direct-URL `scrape` facade over the shared extraction service.
 - Add compact extraction controls.
 - Rewrite descriptions, instructions, docs, and Sonar skill.
 - Add Streamable HTTP support.
@@ -697,7 +704,8 @@ Exit criteria:
 
 - OpenCode connection `sonar` exposes `sonar_search`, not
   `sonar_sonar_search`.
-- Normal guidance is `search -> extract`.
+- Normal guidance is direct `scrape` for a known URL or `search -> scrape` for
+  discovery.
 - Remote MCP smoke tests pass.
 
 ### Phase 6: Packaging And Release Candidate
@@ -913,6 +921,8 @@ The consolidation is complete when:
 - Provenance persists and appears in responses and prepared bundles.
 - Lightweight deployments run without browser dependencies.
 - Orion runs one agent-facing Sonar sidecar plus SearXNG.
-- OpenCode displays `sonar_search` and `sonar_extract`, not `sonar_sonar_*`.
-- Agents are guided toward efficient `search -> extract` workflows.
+- OpenCode displays `sonar_search`, `sonar_scrape`, and `sonar_extract`, not
+  `sonar_sonar_*`.
+- Agents are guided toward direct `scrape` and efficient `search -> scrape`
+  workflows.
 - Blackglass standalone APIs are retired and its repository is archived.

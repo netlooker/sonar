@@ -8,6 +8,7 @@ Raw MCP tool surface:
 - `search`
 - `fetch`
 - `extract`
+- `scrape`
 - `find_papers`
 - `prepare_paper_set`
 - `collect_sources_for_topic`
@@ -17,13 +18,15 @@ Tool roles:
 - MCP clients commonly namespace these names with the configured connection
   name. An OpenCode connection named `sonar` therefore exposes `sonar_search`,
   not `sonar_sonar_search`.
-- The normal composable workflow is `search` followed by `extract` for selected
-  URLs. `fetch` is a metadata probe and is not required before extraction.
+- Call `scrape` directly when the URL is already known. The normal discovery
+  workflow is `search` followed by `scrape` for selected URLs.
+- `extract` supports both URLs and cached document IDs. `fetch` is a metadata
+  probe and is not required before `scrape` or `extract`.
 - Operator-only paths and configuration overrides are not exposed to agents.
 - Stdio remains the default transport; Streamable HTTP is supported at `/mcp`.
-- `extract` defaults to returning at most 12,000 text characters to reduce
-  agent context pressure. Agents can set `include_text=false` or adjust
-  `max_chars` up to the 50,000-character hard limit.
+- `scrape` and `extract` default to returning at most 12,000 text characters
+  to reduce agent context pressure. Agents can set `include_text=false` or
+  adjust `max_chars` up to the 50,000-character hard limit.
 
 Runtime requirements:
 

@@ -55,10 +55,11 @@ def build_server(
         "Sonar",
         instructions=(
             "Use Sonar for deterministic live-web evidence. Normally search, "
-            "then extract only selected URLs; extract does not require a prior "
-            "fetch. Use fetch only for metadata probes. Use paper-preparation "
-            "tools when fewer transitions and durable prepared-source bundles "
-            "are useful."
+            "then scrape only selected URLs. When a URL is already known, call "
+            "scrape directly; no search or fetch call is required. Use extract "
+            "for cached document IDs and fetch only for metadata probes. Use "
+            "paper-preparation tools when fewer transitions and durable "
+            "prepared-source bundles are useful."
         ),
         host=host,
         port=port,
@@ -115,8 +116,26 @@ def build_server(
         ).model_dump()
 
     @mcp.tool(
+        name="scrape",
+        description="Retrieve and extract readable content from a known URL in one call; no search or fetch call is required",
+    )
+    def scrape(
+        url: str,
+        force_refresh: bool = False,
+        include_text: bool = True,
+        max_chars: int = DEFAULT_MCP_TEXT_CHARS,
+    ) -> dict[str, Any]:
+        return _extract_response(
+            url=url,
+            document_id=None,
+            force_refresh=force_refresh,
+            include_text=include_text,
+            max_chars=max_chars,
+        )
+
+    @mcp.tool(
         name="extract",
-        description="Retrieve and extract readable HTML, PDF, and document content; no prior fetch call is required",
+        description="Extract readable content from a URL or cached document ID; prefer scrape for a known URL",
     )
     def extract(
         url: str | None = None,
@@ -125,15 +144,12 @@ def build_server(
         include_text: bool = True,
         max_chars: int = DEFAULT_MCP_TEXT_CHARS,
     ) -> dict[str, Any]:
-        response = extract_document_record(
-            ExtractRequest(
-                url=url,
-                document_id=document_id,
-                force_refresh=force_refresh,
-            )
-        )
-        return _compact_extract_response(
-            response.model_dump(), include_text=include_text, max_chars=max_chars
+        return _extract_response(
+            url=url,
+            document_id=document_id,
+            force_refresh=force_refresh,
+            include_text=include_text,
+            max_chars=max_chars,
         )
 
     @mcp.tool(
@@ -254,6 +270,26 @@ def _compact_extract_response(
         warnings.append("mcp_text_truncated")
     result["retrieval_warnings"] = list(dict.fromkeys(warnings))
     return result
+
+
+def _extract_response(
+    *,
+    url: str | None,
+    document_id: str | None,
+    force_refresh: bool,
+    include_text: bool,
+    max_chars: int,
+) -> dict[str, Any]:
+    response = extract_document_record(
+        ExtractRequest(
+            url=url,
+            document_id=document_id,
+            force_refresh=force_refresh,
+        )
+    )
+    return _compact_extract_response(
+        response.model_dump(), include_text=include_text, max_chars=max_chars
+    )
 
 
 def _env_bool(name: str, default: bool) -> bool:

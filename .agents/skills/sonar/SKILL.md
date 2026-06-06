@@ -26,7 +26,8 @@ Recent Sonar behavior that matters operationally:
 | `sonar_health` | Check runtime readiness | none |
 | `sonar_search` | Search the live web and return ranked evidence | `query`, `limit`, `freshness`, `engines`, `categories`, `language`, `force_refresh` |
 | `sonar_fetch` | Fetch one URL and cache its metadata | `url`, `force_refresh` |
-| `sonar_extract` | Extract readable text from a URL or cached document | `url` or `document_id`, `force_refresh`, `include_text`, `max_chars` |
+| `sonar_scrape` | Retrieve and extract readable content from a known URL in one call | `url`, `force_refresh`, `include_text`, `max_chars` |
+| `sonar_extract` | Extract readable text from a URL or cached document ID | `url` or `document_id`, `force_refresh`, `include_text`, `max_chars` |
 | `sonar_find_papers` | Return curated scientific paper candidates for a topic | `query`, `count`, `profile` |
 | `sonar_prepare_paper_set` | Search, filter, and extract a prepared scientific paper set in one call | `query`, `count`, `profile`, `direct_only` |
 | `sonar_collect_sources_for_topic` | Return a compact structured source bundle for a topic | `topic`, `max_results`, `corpus` |
@@ -58,14 +59,22 @@ Preferred read order for weaker local models:
 
 1. `sonar_search`
 2. Select only the relevant result URLs
-3. `sonar_extract` those selected URLs
+3. `sonar_scrape` those selected URLs
 
-`sonar_extract` performs retrieval itself and does not require a preceding
-`sonar_fetch` call. Use `sonar_fetch` only when you specifically need response
-status, content type, redirect metadata, or cache warming. Use `sonar_health`
-for diagnostics rather than normal research.
+When a URL is already known, call `sonar_scrape` directly without searching.
+It performs resilient retrieval and readable-content extraction in one call.
+Use `sonar_extract` when addressing a cached `document_id`, and `sonar_fetch`
+only when you specifically need response status, content type, redirect
+metadata, or cache warming. Use `sonar_health` for diagnostics rather than
+normal research.
 
 ## Practical patterns
+
+### Scrape a known URL directly
+
+```text
+sonar_scrape(url="https://example.com/article")
+```
 
 ### Prepare a scientific paper set in one call
 
