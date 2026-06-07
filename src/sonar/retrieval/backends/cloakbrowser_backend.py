@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from urllib.parse import urlsplit
 
@@ -24,6 +25,27 @@ def retrieve_with_cloakbrowser(
     max_body_bytes: int,
     wait_until: str,
     validate_url: Callable[[str], None] | None = None,
+) -> BackendResult:
+    # CloakBrowser uses Playwright's synchronous API, which cannot run on an
+    # asyncio event-loop thread such as FastMCP's Streamable HTTP handler.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(
+            _retrieve_with_cloakbrowser,
+            url=url,
+            timeout_seconds=timeout_seconds,
+            max_body_bytes=max_body_bytes,
+            wait_until=wait_until,
+            validate_url=validate_url,
+        ).result()
+
+
+def _retrieve_with_cloakbrowser(
+    *,
+    url: str,
+    timeout_seconds: float,
+    max_body_bytes: int,
+    wait_until: str,
+    validate_url: Callable[[str], None] | None,
 ) -> BackendResult:
     try:
         import cloakbrowser

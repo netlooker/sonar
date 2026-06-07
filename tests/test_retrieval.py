@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import sys
 from types import ModuleType
@@ -370,6 +371,50 @@ def test_cloakbrowser_enforces_body_limit(monkeypatch):
             max_body_bytes=3,
             wait_until="domcontentloaded",
         )
+
+
+def test_cloakbrowser_runs_outside_callers_asyncio_event_loop(monkeypatch):
+    class FakeResponse:
+        status = 200
+        headers = {"content-type": "text/html"}
+
+    class FakePage:
+        url = "https://example.com/page"
+
+        def goto(self, *args, **kwargs):
+            with pytest.raises(RuntimeError):
+                asyncio.get_running_loop()
+            return FakeResponse()
+
+        def content(self):
+            return "<html><article>rendered</article></html>"
+
+        def close(self):
+            pass
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    cloakbrowser = ModuleType("cloakbrowser")
+    cloakbrowser.launch_context = lambda: FakeContext()
+    monkeypatch.setitem(sys.modules, "cloakbrowser", cloakbrowser)
+
+    async def retrieve():
+        return retrieve_with_cloakbrowser(
+            url="https://example.com/page",
+            timeout_seconds=2,
+            max_body_bytes=1024,
+            wait_until="domcontentloaded",
+        )
+
+    result = asyncio.run(retrieve())
+
+    assert result.backend is RetrievalBackend.CLOAKBROWSER
+    assert result.rendered is True
 
 
 def test_http_backend_reports_timeout_and_redirect_errors():

@@ -14,7 +14,7 @@
 
 Verified Sonar gates:
 
-- 96 automated tests pass;
+- 97 automated tests pass;
 - selected retrieval/service/storage/MCP/API core branch coverage is 88%;
 - changed Python files pass Ruff lint and formatting checks;
 - lock verification, bytecode compilation, package build, and diff checks pass;

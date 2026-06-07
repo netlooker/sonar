@@ -57,7 +57,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SONAR_MCP_PORT=8000 \
     SONAR_MCP_PATH=/mcp \
     SONAR_CONFIG=/app/config/sonar.example.toml \
-    SONAR_DB=/data/sonar.sqlite
+    SONAR_DB=/data/sonar.sqlite \
+    CLOAKBROWSER_AUTO_UPDATE=false
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /uvx /bin/
 
