@@ -24,6 +24,11 @@ Prepared bundle behavior:
 - High-level requests accept `persist`, `output_dir`, and `include_sidecars`.
 - Persisted bundles write `prepared_source_bundle.json` plus optional `source_XX.txt` files.
 - Low-level extraction is format-aware for HTML, PDF, DOCX, ODT, Markdown, and plain text.
+- Fetch and extract responses add `retrieval_backend`, `rendered`,
+  `retrieval_attempts`, `retrieval_warnings`, and `fallback_reason`.
+- Difficult HTML can escalate from the normal HTTP path to optional Scrapling
+  HTTP and CloakBrowser backends. Non-HTML formats never use browser fallback.
+- Robots and retrieval-policy denials are terminal.
 - PDF extraction uses `pymupdf`, and extracted PDF body text is preserved in `full_text` for prepared sources.
 - Topic collection scores each candidate against the original topic using embeddings derived from `abstract`, `summary`, or search snippet text.
 - If the embeddings provider is unavailable or unconfigured, topic collection continues without the semantic filter and returns a warning.
@@ -43,6 +48,8 @@ Compatibility contract:
   `abstract`, `full_text`, `full_text_path`, `source_type`, `retrieved_at`,
   `extraction_status`, and `extraction_method`.
 - Extra bundle metadata is allowed as long as those fields remain stable.
+- Retrieval provenance is additive metadata and does not change
+  `bundle_version = 1`.
 
 Default bind:
 

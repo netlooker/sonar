@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
@@ -15,11 +17,33 @@ from pydantic import BaseModel, Field
 
 from .bundles import build_bundle_id, build_request_fingerprint, persist_prepared_bundle
 from .embeddings import EmbeddingProvider, EmbeddingSettings, cosine_similarity
-from .errors import SonarBadRequestError, SonarError, SonarNotFoundError, SonarUpstreamUnavailableError
-from .extract import detect_source_format, extract_document, trafilatura_available
-from .fetch import fetch_url
+from .errors import (
+    SonarBadRequestError,
+    SonarError,
+    SonarNotFoundError,
+    SonarUpstreamUnavailableError,
+)
+from .extract import (
+    ExtractArtifact,
+    detect_source_format,
+    extract_document,
+    trafilatura_available,
+)
 from .query_planner import generate_query_variants, normalize_query
-from .ranking import canonicalize_url, dedupe_results, query_signature, rank_results, url_domain
+from .ranking import (
+    canonicalize_url,
+    dedupe_results,
+    query_signature,
+    rank_results,
+    url_domain,
+)
+from .retrieval import RetrievalArtifact, RetrievalBackend, retrieve_url
+from .retrieval.capabilities import (
+    cloakbrowser_available,
+    playwright_available,
+    scrapling_available,
+)
+from .retrieval.policy import assert_backend_allowed
 from .search_providers import SearxNGProvider
 from .settings import AppSettings, load_settings
 from .storage import Repository
@@ -30,6 +54,12 @@ class RequirementSummary(BaseModel):
     writable_database_parent: bool
     searxng_configured: bool
     trafilatura_installed: bool
+    scrapling_enabled: bool
+    scrapling_installed: bool
+    browser_enabled: bool
+    cloakbrowser_enabled: bool
+    cloakbrowser_installed: bool
+    playwright_installed: bool
 
 
 class HealthRequest(BaseModel):
@@ -99,6 +129,11 @@ class FetchResponse(BaseModel):
     source_format: str | None = None
     fetched_at: float
     from_cache: bool
+    retrieval_backend: str | None = None
+    rendered: bool = False
+    retrieval_attempts: list[str] = Field(default_factory=list)
+    retrieval_warnings: list[str] = Field(default_factory=list)
+    fallback_reason: str | None = None
 
 
 class ExtractRequest(BaseModel):
@@ -125,6 +160,11 @@ class ExtractResponse(BaseModel):
     extraction_method: str | None = None
     extraction_status: str | None = None
     from_cache: bool
+    retrieval_backend: str | None = None
+    rendered: bool = False
+    retrieval_attempts: list[str] = Field(default_factory=list)
+    retrieval_warnings: list[str] = Field(default_factory=list)
+    fallback_reason: str | None = None
 
 
 class FindPapersRequest(BaseModel):
@@ -163,6 +203,11 @@ class PreparedSource(BaseModel):
     from_search_cache: bool = False
     from_extract_cache: bool = False
     source_warnings: list[str] = Field(default_factory=list)
+    retrieval_backend: str | None = None
+    rendered: bool = False
+    retrieval_attempts: list[str] = Field(default_factory=list)
+    retrieval_warnings: list[str] = Field(default_factory=list)
+    fallback_reason: str | None = None
 
 
 class PreparedBundleSource(PreparedSource):
@@ -312,7 +357,9 @@ PAPER_HINTS = (
 MAX_PREPARATION_SEARCH_MULTIPLIER = 4
 
 
-def resolve_runtime(config_path: str | None = None, db_path: str | None = None) -> tuple[AppSettings, Path]:
+def resolve_runtime(
+    config_path: str | None = None, db_path: str | None = None
+) -> tuple[AppSettings, Path]:
     settings = load_settings(config_path)
     path = Path(db_path or settings.database.path).expanduser()
     return settings, path
@@ -332,12 +379,20 @@ def runtime_requirements(request: HealthRequest) -> HealthResponse:
             writable_database_parent=writable_database_parent,
             searxng_configured=bool(settings.searxng.base_url),
             trafilatura_installed=trafilatura_available(),
+            scrapling_enabled=settings.retrieval.scrapling_enabled,
+            scrapling_installed=scrapling_available(),
+            browser_enabled=settings.retrieval.browser_enabled,
+            cloakbrowser_enabled=settings.retrieval.cloakbrowser_enabled,
+            cloakbrowser_installed=cloakbrowser_available(),
+            playwright_installed=playwright_available(),
         ),
         ready=writable_database_parent and bool(settings.searxng.base_url),
     )
 
 
-def search_web(request: SearchRequest, *, transport: httpx.BaseTransport | None = None) -> SearchResponse:
+def search_web(
+    request: SearchRequest, *, transport: httpx.BaseTransport | None = None
+) -> SearchResponse:
     settings, db_path = resolve_runtime(request.config_path, request.db_path)
     normalized_query = normalize_query(request.query)
     if not normalized_query:
@@ -345,7 +400,9 @@ def search_web(request: SearchRequest, *, transport: httpx.BaseTransport | None 
 
     limit = request.limit or settings.search.default_limit
     if limit < 1 or limit > settings.search.max_limit:
-        raise SonarBadRequestError(f"Search limit must be between 1 and {settings.search.max_limit}.")
+        raise SonarBadRequestError(
+            f"Search limit must be between 1 and {settings.search.max_limit}."
+        )
     if request.freshness not in {"any", "day", "week", "month"}:
         raise SonarBadRequestError("Freshness must be one of: any, day, week, month.")
 
@@ -445,7 +502,9 @@ def search_web(request: SearchRequest, *, transport: httpx.BaseTransport | None 
         repo.close()
 
 
-def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTransport | None = None) -> FetchResponse:
+def fetch_document_record(
+    request: FetchRequest, *, transport: httpx.BaseTransport | None = None
+) -> FetchResponse:
     settings, db_path = resolve_runtime(request.config_path, request.db_path)
     canonical_url = canonicalize_url(request.url)
     repo = Repository(db_path)
@@ -453,7 +512,14 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
     try:
         existing = repo.get_document_by_canonical_url(canonical_url)
         now = time()
-        if existing is not None and not request.force_refresh and float(existing["fetch_expires_at"]) > now:
+        if (
+            existing is not None
+            and not request.force_refresh
+            and float(existing["fetch_expires_at"]) > now
+        ):
+            _assert_cached_retrieval_allowed(
+                existing, settings=settings, transport=transport
+            )
             return FetchResponse(
                 document_id=str(existing["document_id"]),
                 url=str(existing["url"]),
@@ -464,31 +530,28 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
                 source_format=existing["source_format"],
                 fetched_at=float(existing["fetched_at"]),
                 from_cache=True,
+                **_row_retrieval_provenance(existing),
             )
 
-        artifact = fetch_url(
-            url=request.url,
-            user_agent=settings.fetch.user_agent,
-            connect_timeout_seconds=settings.fetch.connect_timeout_seconds,
-            read_timeout_seconds=settings.fetch.read_timeout_seconds,
-            max_body_bytes=settings.fetch.max_body_bytes,
-            transport=transport,
-            include_body=False,
-        )
+        artifact = retrieve_url(url=request.url, settings=settings, transport=transport)
         document_id = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
-        repo.store_document_fetch(
+        _store_retrieval(
+            repo,
+            artifact=artifact,
             document_id=document_id,
-            url=request.url,
+            stored_url=request.url,
             canonical_url=canonical_url,
-            final_url=artifact.final_url,
-            status=artifact.status,
-            status_code=artifact.status_code,
-            content_type=artifact.content_type,
-            fetched_at=now,
-            fetch_expires_at=now + settings.cache.extract_ttl_seconds,
-            extractable=artifact.extractable,
-            source_format=artifact.source_format,
+            now=now,
+            ttl=settings.cache.extract_ttl_seconds,
         )
+        if artifact.extracted is not None:
+            _store_extraction(
+                repo,
+                document_id=document_id,
+                extracted=artifact.extracted,
+                now=now,
+                ttl=settings.cache.extract_ttl_seconds,
+            )
         return FetchResponse(
             document_id=document_id,
             url=request.url,
@@ -499,12 +562,15 @@ def fetch_document_record(request: FetchRequest, *, transport: httpx.BaseTranspo
             source_format=artifact.source_format,
             fetched_at=now,
             from_cache=False,
+            **_artifact_retrieval_provenance(artifact),
         )
     finally:
         repo.close()
 
 
-def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTransport | None = None) -> ExtractResponse:
+def extract_document_record(
+    request: ExtractRequest, *, transport: httpx.BaseTransport | None = None
+) -> ExtractResponse:
     settings, db_path = resolve_runtime(request.config_path, request.db_path)
     repo = Repository(db_path)
     repo.initialize()
@@ -518,6 +584,9 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             and row["extract_expires_at"]
             and float(row["extract_expires_at"]) > now
         ):
+            _assert_cached_retrieval_allowed(
+                row, settings=settings, transport=transport
+            )
             return ExtractResponse(
                 document_id=str(row["document_id"]),
                 canonical_url=str(row["canonical_url"]),
@@ -534,6 +603,7 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
                 extraction_method=row["extraction_method"],
                 extraction_status=row["extraction_status"],
                 from_cache=True,
+                **_row_retrieval_provenance(row),
             )
 
         if request.document_id:
@@ -549,50 +619,56 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
         else:
             raise SonarBadRequestError("Provide either url or document_id.")
 
-        fetched = fetch_url(
-            url=url,
-            user_agent=settings.fetch.user_agent,
-            connect_timeout_seconds=settings.fetch.connect_timeout_seconds,
-            read_timeout_seconds=settings.fetch.read_timeout_seconds,
-            max_body_bytes=settings.fetch.max_body_bytes,
-            transport=transport,
-            include_body=True,
-        )
-        if not fetched.extractable:
+        fetched: RetrievalArtifact | None = None
+        if (
+            row is not None
+            and not request.force_refresh
+            and row["body"] is not None
+            and row["body_expires_at"]
+            and float(row["body_expires_at"]) > now
+        ):
+            _assert_cached_retrieval_allowed(
+                row, settings=settings, transport=transport
+            )
+            body = bytes(row["body"])
+            final_url = str(row["final_url"])
+            content_type = str(row["content_type"])
+            source_format = row["source_format"]
+        else:
+            fetched = retrieve_url(url=url, settings=settings, transport=transport)
+            body = fetched.body
+            final_url = fetched.final_url
+            content_type = fetched.content_type
+            source_format = fetched.source_format
+        if source_format is None:
             raise SonarBadRequestError("Fetched document is not extractable.")
         document_id = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
-        repo.store_document_fetch(
-            document_id=document_id,
-            url=stored_url,
-            canonical_url=canonical_url,
-            final_url=fetched.final_url,
-            status=fetched.status,
-            status_code=fetched.status_code,
-            content_type=fetched.content_type,
-            fetched_at=now,
-            fetch_expires_at=now + settings.cache.extract_ttl_seconds,
-            extractable=True,
-            source_format=fetched.source_format,
+        if fetched is not None:
+            _store_retrieval(
+                repo,
+                artifact=fetched,
+                document_id=document_id,
+                stored_url=stored_url,
+                canonical_url=canonical_url,
+                now=now,
+                ttl=settings.cache.extract_ttl_seconds,
+            )
+        extracted = (
+            fetched.extracted
+            if fetched is not None and fetched.extracted is not None
+            else _extract_payload(body, url=final_url, content_type=content_type)
         )
-        extracted = _extract_payload(
-            fetched.body or b"",
-            url=fetched.final_url,
-            content_type=fetched.content_type,
-        )
-        repo.store_extract(
+        _store_extraction(
+            repo,
             document_id=document_id,
-            title=extracted.title,
-            byline=extracted.byline,
-            published_at=extracted.published_at,
-            language=extracted.language,
-            excerpt=extracted.excerpt,
-            abstract=extracted.abstract,
-            text=extracted.text,
-            word_count=extracted.word_count,
-            extract_hash=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
-            extract_expires_at=now + settings.cache.extract_ttl_seconds,
-            extraction_method=extracted.extraction_method,
-            extraction_status=extracted.extraction_status,
+            extracted=extracted,
+            now=now,
+            ttl=settings.cache.extract_ttl_seconds,
+        )
+        provenance = (
+            _artifact_retrieval_provenance(fetched)
+            if fetched is not None
+            else _row_retrieval_provenance(row)
         )
         return ExtractResponse(
             document_id=document_id,
@@ -605,19 +681,24 @@ def extract_document_record(request: ExtractRequest, *, transport: httpx.BaseTra
             abstract=extracted.abstract,
             text=extracted.text,
             word_count=extracted.word_count,
-            content_type=fetched.content_type,
+            content_type=content_type,
             source_format=extracted.source_format,
             extraction_method=extracted.extraction_method,
             extraction_status=extracted.extraction_status,
             from_cache=False,
+            **provenance,
         )
     finally:
         repo.close()
 
 
-def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | None = None) -> FindPapersResponse:
+def find_papers(
+    request: FindPapersRequest, *, transport: httpx.BaseTransport | None = None
+) -> FindPapersResponse:
     settings, _ = resolve_runtime(request.config_path, request.db_path)
-    requested_count = _validate_requested_count(request.count, settings.search.max_limit)
+    requested_count = _validate_requested_count(
+        request.count, settings.search.max_limit
+    )
     search_response, candidates = _find_paper_candidates(
         query=request.query,
         config_path=request.config_path,
@@ -628,7 +709,9 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
         force_refresh=request.force_refresh,
         transport=transport,
     )
-    partial_results = search_response.partial_results or len(candidates) < requested_count
+    partial_results = (
+        search_response.partial_results or len(candidates) < requested_count
+    )
     warnings = list(search_response.warnings)
     if len(candidates) < requested_count:
         warnings.append(
@@ -643,7 +726,9 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
         warnings=warnings,
         candidates=[
             PreparedSource(
-                source_id=_stable_source_id(candidate.direct_paper_url or candidate.result.canonical_url),
+                source_id=_stable_source_id(
+                    candidate.direct_paper_url or candidate.result.canonical_url
+                ),
                 title=candidate.result.title,
                 origin_url=candidate.result.url,
                 url=candidate.result.canonical_url,
@@ -663,9 +748,13 @@ def find_papers(request: FindPapersRequest, *, transport: httpx.BaseTransport | 
     )
 
 
-def prepare_paper_set(request: PreparePaperSetRequest, *, transport: httpx.BaseTransport | None = None) -> PreparePaperSetResponse:
+def prepare_paper_set(
+    request: PreparePaperSetRequest, *, transport: httpx.BaseTransport | None = None
+) -> PreparePaperSetResponse:
     settings, db_path = resolve_runtime(request.config_path, request.db_path)
-    requested_count = _validate_requested_count(request.count, settings.search.max_limit)
+    requested_count = _validate_requested_count(
+        request.count, settings.search.max_limit
+    )
     candidate_pool_count = min(
         settings.search.max_limit,
         max(requested_count, requested_count * MAX_PREPARATION_SEARCH_MULTIPLIER),
@@ -696,7 +785,9 @@ def prepare_paper_set(request: PreparePaperSetRequest, *, transport: httpx.BaseT
             selected.append(prepared)
     partial_results = search_response.partial_results or len(selected) < requested_count
     if len(selected) < requested_count:
-        warnings.append(f"prepared {len(selected)} sources out of {requested_count} requested.")
+        warnings.append(
+            f"prepared {len(selected)} sources out of {requested_count} requested."
+        )
 
     bundle = _build_bundle(
         query=search_response.query,
@@ -733,7 +824,10 @@ def prepare_paper_set(request: PreparePaperSetRequest, *, transport: httpx.BaseT
         selected_count=len(bundle.sources),
         partial_results=partial_results,
         warnings=warnings,
-        sources=[PreparedSource.model_validate(source.model_dump()) for source in bundle.sources],
+        sources=[
+            PreparedSource.model_validate(source.model_dump())
+            for source in bundle.sources
+        ],
         bundle=bundle,
     )
 
@@ -747,7 +841,9 @@ def collect_sources_for_topic(
         supported = ", ".join(sorted(SUPPORTED_CORPORA))
         raise SonarBadRequestError(f"Corpus must be one of: {supported}.")
     settings, db_path = resolve_runtime(request.config_path, request.db_path)
-    requested_count = _validate_requested_count(request.max_results, settings.search.max_limit)
+    requested_count = _validate_requested_count(
+        request.max_results, settings.search.max_limit
+    )
     candidate_pool_count = min(
         settings.search.max_limit,
         max(requested_count, requested_count * MAX_PREPARATION_SEARCH_MULTIPLIER),
@@ -777,13 +873,17 @@ def collect_sources_for_topic(
     )
     warnings.extend(relevance_warnings)
     selected_sources = filtered_sources[:requested_count]
-    partial_results = prepared.partial_results or len(selected_sources) < requested_count
+    partial_results = (
+        prepared.partial_results or len(selected_sources) < requested_count
+    )
     if len(filtered_sources) < len(prepared.bundle.sources):
         warnings.append(
             f"filtered out {len(prepared.bundle.sources) - len(filtered_sources)} low-relevance sources for topic search."
         )
     if len(selected_sources) < requested_count:
-        warnings.append(f"prepared {len(selected_sources)} sources out of {requested_count} requested.")
+        warnings.append(
+            f"prepared {len(selected_sources)} sources out of {requested_count} requested."
+        )
 
     bundle = prepared.bundle.model_copy(
         update={
@@ -817,7 +917,10 @@ def collect_sources_for_topic(
         selected_count=len(bundle.sources),
         partial_results=bundle.partial_results,
         warnings=bundle.warnings,
-        sources=[PreparedSource.model_validate(source.model_dump()) for source in bundle.sources],
+        sources=[
+            PreparedSource.model_validate(source.model_dump())
+            for source in bundle.sources
+        ],
         bundle=bundle,
     )
 
@@ -899,7 +1002,9 @@ def _prepare_candidate_source(
 
     if html_extract and direct_extract:
         if direct_error:
-            warnings.append(f"failed direct document follow-up for {direct_document_url}: {direct_error.message}")
+            warnings.append(
+                f"failed direct document follow-up for {direct_document_url}: {direct_error.message}"
+            )
         return (
             _merge_prepared_source(
                 candidate,
@@ -915,7 +1020,9 @@ def _prepare_candidate_source(
 
     if html_extract:
         if direct_error:
-            warnings.append(f"failed direct document follow-up for {direct_document_url}: {direct_error.message}")
+            warnings.append(
+                f"failed direct document follow-up for {direct_document_url}: {direct_error.message}"
+            )
         return (
             _build_prepared_source(
                 candidate,
@@ -931,7 +1038,9 @@ def _prepare_candidate_source(
 
     if direct_extract:
         if html_error:
-            warnings.append(f"landing-page extraction failed for {candidate_url}: {html_error.message}")
+            warnings.append(
+                f"landing-page extraction failed for {candidate_url}: {html_error.message}"
+            )
         return (
             _build_prepared_source(
                 candidate,
@@ -946,11 +1055,17 @@ def _prepare_candidate_source(
         )
 
     if html_error:
-        warnings.append(f"failed to prepare candidate {candidate_url}: {html_error.message}")
+        warnings.append(
+            f"failed to prepare candidate {candidate_url}: {html_error.message}"
+        )
     if direct_error and direct_document_url != candidate_url:
-        warnings.append(f"failed to prepare direct document {direct_document_url}: {direct_error.message}")
+        warnings.append(
+            f"failed to prepare direct document {direct_document_url}: {direct_error.message}"
+        )
     elif direct_error:
-        warnings.append(f"failed to prepare candidate {candidate_url}: {direct_error.message}")
+        warnings.append(
+            f"failed to prepare candidate {candidate_url}: {direct_error.message}"
+        )
     return None, warnings
 
 
@@ -974,7 +1089,9 @@ def _build_prepared_source(
         published=extracted.published_at or candidate.result.published_at,
         authors=_split_authors(extracted.byline),
         author_raw=extracted.byline,
-        summary=_best_effort_summary(extracted.excerpt, extracted.abstract, extracted.text),
+        summary=_best_effort_summary(
+            extracted.excerpt, extracted.abstract, extracted.text
+        ),
         abstract=extracted.abstract,
         full_text=extracted.text if include_full_text else None,
         selection_reason=candidate.selection_reason,
@@ -991,6 +1108,11 @@ def _build_prepared_source(
         from_search_cache=search_from_cache,
         from_extract_cache=extracted.from_cache,
         source_warnings=source_warnings,
+        retrieval_backend=extracted.retrieval_backend,
+        rendered=extracted.rendered,
+        retrieval_attempts=extracted.retrieval_attempts,
+        retrieval_warnings=extracted.retrieval_warnings,
+        fallback_reason=extracted.fallback_reason,
     )
 
 
@@ -1004,10 +1126,18 @@ def _merge_prepared_source(
     include_full_text: bool,
     direct_document_url: str | None,
 ) -> PreparedBundleSource:
-    primary = direct_extract if len(direct_extract.text) >= len(html_extract.text) else html_extract
+    primary = (
+        direct_extract
+        if len(direct_extract.text) >= len(html_extract.text)
+        else html_extract
+    )
     full_text = primary.text if include_full_text else None
     title = html_extract.title or direct_extract.title or candidate.result.title
-    published = html_extract.published_at or direct_extract.published_at or candidate.result.published_at
+    published = (
+        html_extract.published_at
+        or direct_extract.published_at
+        or candidate.result.published_at
+    )
     author_raw = html_extract.byline or direct_extract.byline
     abstract = html_extract.abstract or html_extract.excerpt or direct_extract.abstract
     summary = _best_effort_summary(html_extract.excerpt, abstract, primary.text)
@@ -1016,7 +1146,9 @@ def _merge_prepared_source(
         content_type=direct_extract.content_type,
     )
     return PreparedBundleSource(
-        source_id=_stable_source_id(direct_document_url or direct_extract.canonical_url),
+        source_id=_stable_source_id(
+            direct_document_url or direct_extract.canonical_url
+        ),
         title=title,
         origin_url=candidate.result.url,
         url=html_extract.canonical_url,
@@ -1032,7 +1164,9 @@ def _merge_prepared_source(
         direct_paper_url=direct_document_url or direct_extract.canonical_url,
         document_id=primary.document_id,
         retrieved_at=retrieved_at,
-        extraction_status=_merge_status(html_extract.extraction_status, direct_extract.extraction_status),
+        extraction_status=_merge_status(
+            html_extract.extraction_status, direct_extract.extraction_status
+        ),
         extraction_method=f"html+{direct_method or 'text'}",
         content_type=primary.content_type,
         search_score=candidate.result.score,
@@ -1040,7 +1174,120 @@ def _merge_prepared_source(
         from_search_cache=search_from_cache,
         from_extract_cache=primary.from_cache,
         source_warnings=[],
+        retrieval_backend=primary.retrieval_backend,
+        rendered=primary.rendered,
+        retrieval_attempts=primary.retrieval_attempts,
+        retrieval_warnings=list(
+            dict.fromkeys(
+                html_extract.retrieval_warnings + direct_extract.retrieval_warnings
+            )
+        ),
+        fallback_reason=primary.fallback_reason,
     )
+
+
+def _store_retrieval(
+    repo: Repository,
+    *,
+    artifact: RetrievalArtifact,
+    document_id: str,
+    stored_url: str,
+    canonical_url: str,
+    now: float,
+    ttl: int,
+) -> None:
+    repo.store_document_fetch(
+        document_id=document_id,
+        url=stored_url,
+        canonical_url=canonical_url,
+        final_url=artifact.final_url,
+        status=artifact.status,
+        status_code=artifact.status_code,
+        content_type=artifact.content_type,
+        fetched_at=now,
+        fetch_expires_at=now + ttl,
+        extractable=artifact.extractable,
+        source_format=artifact.source_format,
+        body=artifact.body,
+        body_hash=hashlib.sha256(artifact.body).hexdigest(),
+        body_expires_at=now + ttl,
+        retrieval_backend=artifact.backend.value,
+        rendered=artifact.rendered,
+        retrieval_attempts=[attempt.backend.value for attempt in artifact.attempts],
+        retrieval_warnings=list(artifact.warnings),
+        fallback_reason=artifact.fallback_reason.value
+        if artifact.fallback_reason
+        else None,
+    )
+
+
+def _store_extraction(
+    repo: Repository,
+    *,
+    document_id: str,
+    extracted: ExtractArtifact,
+    now: float,
+    ttl: int,
+) -> None:
+    repo.store_extract(
+        document_id=document_id,
+        title=extracted.title,
+        byline=extracted.byline,
+        published_at=extracted.published_at,
+        language=extracted.language,
+        excerpt=extracted.excerpt,
+        abstract=extracted.abstract,
+        text=extracted.text,
+        word_count=extracted.word_count,
+        extract_hash=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
+        extract_expires_at=now + ttl,
+        extraction_method=extracted.extraction_method,
+        extraction_status=extracted.extraction_status,
+    )
+
+
+def _artifact_retrieval_provenance(
+    artifact: RetrievalArtifact | None,
+) -> dict[str, object]:
+    if artifact is None:
+        return {}
+    return {
+        "retrieval_backend": artifact.backend.value,
+        "rendered": artifact.rendered,
+        "retrieval_attempts": [attempt.backend.value for attempt in artifact.attempts],
+        "retrieval_warnings": list(artifact.warnings),
+        "fallback_reason": artifact.fallback_reason.value
+        if artifact.fallback_reason
+        else None,
+    }
+
+
+def _row_retrieval_provenance(row) -> dict[str, object]:
+    if row is None:
+        return {}
+    return {
+        "retrieval_backend": row["retrieval_backend"],
+        "rendered": bool(row["rendered"]),
+        "retrieval_attempts": json.loads(row["retrieval_attempts_json"] or "[]"),
+        "retrieval_warnings": json.loads(row["retrieval_warnings_json"] or "[]"),
+        "fallback_reason": row["fallback_reason"],
+    }
+
+
+def _assert_cached_retrieval_allowed(
+    row, *, settings: AppSettings, transport: httpx.BaseTransport | None
+) -> None:
+    backend_value = row["retrieval_backend"] or RetrievalBackend.HTTP.value
+    try:
+        backend = RetrievalBackend(backend_value)
+    except ValueError:
+        backend = RetrievalBackend.HTTP
+    resolver = _mock_public_resolver if transport is not None else socket.getaddrinfo
+    assert_backend_allowed(str(row["final_url"]), backend, settings, resolver=resolver)
+
+
+def _mock_public_resolver(hostname: str, port: int, **kwargs):
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
 
 
 def _build_bundle(
@@ -1120,7 +1367,9 @@ def _find_paper_candidates(
             db_path=db_path,
             limit=min(
                 settings.search.max_limit,
-                max(requested_count, requested_count * MAX_PREPARATION_SEARCH_MULTIPLIER),
+                max(
+                    requested_count, requested_count * MAX_PREPARATION_SEARCH_MULTIPLIER
+                ),
             ),
             force_refresh=force_refresh,
         ),
@@ -1134,7 +1383,9 @@ def _find_paper_candidates(
     return search_response, candidates
 
 
-def _assess_paper_candidate(result: SearchResult, *, direct_only: bool) -> _CandidateAssessment | None:
+def _assess_paper_candidate(
+    result: SearchResult, *, direct_only: bool
+) -> _CandidateAssessment | None:
     lower_url = result.canonical_url.lower()
     lower_title = result.title.lower()
     lower_snippet = result.snippet.lower()
@@ -1146,16 +1397,24 @@ def _assess_paper_candidate(result: SearchResult, *, direct_only: bool) -> _Cand
 
     suffix = Path(urlparse(lower_url).path).suffix
     is_document = suffix in DIRECT_DOCUMENT_SUFFIXES
-    is_direct = is_document or any(pattern in lower_url for pattern in DIRECT_PAPER_PATTERNS)
+    is_direct = is_document or any(
+        pattern in lower_url for pattern in DIRECT_PAPER_PATTERNS
+    )
     is_academic = _domain_matches(domain, ACADEMIC_DOMAINS)
     is_aggregator = _domain_matches(domain, AGGREGATOR_DOMAINS)
-    has_paper_hints = any(hint in lower_title or hint in lower_snippet for hint in PAPER_HINTS)
+    has_paper_hints = any(
+        hint in lower_title or hint in lower_snippet for hint in PAPER_HINTS
+    )
 
     if is_direct:
         source_type = _source_type_from_suffix(suffix)
         direct_paper_url = result.canonical_url
         paper_score += 0.55 if suffix not in DIRECT_DOCUMENT_SUFFIXES else 0.4
-        reasons.append("direct paper page" if suffix not in DIRECT_DOCUMENT_SUFFIXES else f"direct {suffix[1:]} document")
+        reasons.append(
+            "direct paper page"
+            if suffix not in DIRECT_DOCUMENT_SUFFIXES
+            else f"direct {suffix[1:]} document"
+        )
     if is_academic:
         paper_score += 0.3
         reasons.append("academic source domain")
@@ -1169,7 +1428,11 @@ def _assess_paper_candidate(result: SearchResult, *, direct_only: bool) -> _Cand
 
     if direct_only and not is_direct:
         return None
-    if not direct_only and source_type == "web_result" and not (is_academic or has_paper_hints):
+    if (
+        not direct_only
+        and source_type == "web_result"
+        and not (is_academic or has_paper_hints)
+    ):
         return None
 
     confidence = round(max(0.05, min(0.99, paper_score / 1.4)), 3)
@@ -1203,7 +1466,9 @@ def _discover_direct_document_url(candidate: _CandidateAssessment) -> str | None
     if parsed.netloc.endswith("aclanthology.org") and parsed.path.endswith("/"):
         return f"{canonical_url.rstrip('/')}.pdf"
 
-    if parsed.netloc.endswith("proceedings.mlr.press") and parsed.path.endswith(".html"):
+    if parsed.netloc.endswith("proceedings.mlr.press") and parsed.path.endswith(
+        ".html"
+    ):
         return canonical_url[:-5] + ".pdf"
 
     return None
@@ -1217,7 +1482,9 @@ def _validate_preparation_profile(profile: str) -> None:
 
 def _validate_requested_count(count: int, max_limit: int) -> int:
     if count < 1 or count > max_limit:
-        raise SonarBadRequestError(f"Requested count must be between 1 and {max_limit}.")
+        raise SonarBadRequestError(
+            f"Requested count must be between 1 and {max_limit}."
+        )
     return count
 
 
@@ -1234,7 +1501,9 @@ def _split_authors(byline: str | None) -> list[str]:
     return authors
 
 
-def _best_effort_summary(excerpt: str | None, abstract: str | None, text: str) -> str | None:
+def _best_effort_summary(
+    excerpt: str | None, abstract: str | None, text: str
+) -> str | None:
     for candidate in (excerpt, abstract, text):
         normalized = " ".join((candidate or "").split())
         if normalized:
@@ -1269,7 +1538,10 @@ def _source_type_from_suffix(suffix: str) -> str:
 
 
 def _domain_matches(domain: str, candidates: set[str]) -> bool:
-    return any(domain == candidate or domain.endswith(f".{candidate}") for candidate in candidates)
+    return any(
+        domain == candidate or domain.endswith(f".{candidate}")
+        for candidate in candidates
+    )
 
 
 def _filter_topic_sources_by_relevance(
@@ -1287,11 +1559,15 @@ def _filter_topic_sources_by_relevance(
     if len(scored_inputs) < 2:
         return sources, []
     if not settings.embeddings.enabled or not settings.embeddings.model:
-        return sources, ["topic relevance filter skipped: embeddings provider is disabled."]
+        return sources, [
+            "topic relevance filter skipped: embeddings provider is disabled."
+        ]
 
     api_key = settings.embeddings.api_key
     if not api_key and "api.openai.com" in settings.embeddings.base_url:
-        return sources, ["topic relevance filter skipped: embeddings API key is not configured."]
+        return sources, [
+            "topic relevance filter skipped: embeddings API key is not configured."
+        ]
 
     provider = EmbeddingProvider(
         settings=EmbeddingSettings(
@@ -1319,12 +1595,18 @@ def _filter_topic_sources_by_relevance(
             scored_sources.append((source, similarity))
 
     retained_ids = {source.source_id for source, _ in scored_sources}
-    missing_sources = [source for source in sources if source.source_id not in scores_by_id]
-    retained_sources = [source for source in sources if source.source_id in retained_ids]
+    missing_sources = [
+        source for source in sources if source.source_id not in scores_by_id
+    ]
+    retained_sources = [
+        source for source in sources if source.source_id in retained_ids
+    ]
     retained_sources.extend(missing_sources)
     retained_sources.sort(
         key=lambda source: (
-            scores_by_id.get(source.source_id, settings.embeddings.similarity_threshold),
+            scores_by_id.get(
+                source.source_id, settings.embeddings.similarity_threshold
+            ),
             source.search_score,
         ),
         reverse=True,

@@ -4,7 +4,7 @@
     "title": "Sonar API",
     "summary": "HTTP and OpenAPI interface for deterministic live-web evidence.",
     "description": "Expose Sonar search, fetch, multi-format extraction, prepared paper sets, durable prepared-source bundles, and runtime readiness over JSON/HTTP.",
-    "version": "0.2.1"
+    "version": "0.3.0"
   },
   "paths": {
     "/health": {
@@ -191,6 +191,16 @@
               }
             }
           },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Service Unavailable",
             "content": {
@@ -274,6 +284,16 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
             "content": {
               "application/json": {
                 "schema": {
@@ -979,6 +999,47 @@
           "from_cache": {
             "type": "boolean",
             "title": "From Cache"
+          },
+          "retrieval_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Backend"
+          },
+          "rendered": {
+            "type": "boolean",
+            "title": "Rendered",
+            "default": false
+          },
+          "retrieval_attempts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Attempts"
+          },
+          "retrieval_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Warnings"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
           }
         },
         "type": "object",
@@ -1075,6 +1136,47 @@
           "from_cache": {
             "type": "boolean",
             "title": "From Cache"
+          },
+          "retrieval_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Backend"
+          },
+          "rendered": {
+            "type": "boolean",
+            "title": "Rendered",
+            "default": false
+          },
+          "retrieval_attempts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Attempts"
+          },
+          "retrieval_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Warnings"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
           }
         },
         "type": "object",
@@ -1564,6 +1666,47 @@
             },
             "type": "array",
             "title": "Source Warnings"
+          },
+          "retrieval_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Backend"
+          },
+          "rendered": {
+            "type": "boolean",
+            "title": "Rendered",
+            "default": false
+          },
+          "retrieval_attempts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Attempts"
+          },
+          "retrieval_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Warnings"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
           }
         },
         "type": "object",
@@ -1755,6 +1898,47 @@
             },
             "type": "array",
             "title": "Source Warnings"
+          },
+          "retrieval_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Backend"
+          },
+          "rendered": {
+            "type": "boolean",
+            "title": "Rendered",
+            "default": false
+          },
+          "retrieval_attempts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Attempts"
+          },
+          "retrieval_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieval Warnings"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
           }
         },
         "type": "object",
@@ -1900,13 +2084,43 @@
           "trafilatura_installed": {
             "type": "boolean",
             "title": "Trafilatura Installed"
+          },
+          "scrapling_enabled": {
+            "type": "boolean",
+            "title": "Scrapling Enabled"
+          },
+          "scrapling_installed": {
+            "type": "boolean",
+            "title": "Scrapling Installed"
+          },
+          "browser_enabled": {
+            "type": "boolean",
+            "title": "Browser Enabled"
+          },
+          "cloakbrowser_enabled": {
+            "type": "boolean",
+            "title": "Cloakbrowser Enabled"
+          },
+          "cloakbrowser_installed": {
+            "type": "boolean",
+            "title": "Cloakbrowser Installed"
+          },
+          "playwright_installed": {
+            "type": "boolean",
+            "title": "Playwright Installed"
           }
         },
         "type": "object",
         "required": [
           "writable_database_parent",
           "searxng_configured",
-          "trafilatura_installed"
+          "trafilatura_installed",
+          "scrapling_enabled",
+          "scrapling_installed",
+          "browser_enabled",
+          "cloakbrowser_enabled",
+          "cloakbrowser_installed",
+          "playwright_installed"
         ],
         "title": "RequirementSummary"
       },

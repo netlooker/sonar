@@ -1,16 +1,33 @@
+import asyncio
 import json
+import os
 from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
 
 import pytest
 
 mcp = pytest.importorskip("mcp")
 
-from sonar.mcp_server import _require_server_config, build_server, runtime_requirements
-from sonar.service_api import CollectSourcesForTopicResponse, ExtractResponse, PreparedSourceBundle
+from mcp import ClientSession, StdioServerParameters  # noqa: E402
+from mcp.client.stdio import stdio_client  # noqa: E402
+from mcp.client.streamable_http import streamable_http_client  # noqa: E402
+from sonar.mcp_server import _require_server_config, build_server, runtime_requirements  # noqa: E402
+from sonar.service_api import (  # noqa: E402
+    CollectSourcesForTopicResponse,
+    ExtractResponse,
+    FindPapersResponse,
+    PreparePaperSetResponse,
+    PreparedSourceBundle,
+)
 
 
 def test_runtime_requirements_reports_database_path(tmp_path):
-    response = runtime_requirements(config_path="config/sonar.example.toml", db_path=str(tmp_path / "sonar.sqlite"))
+    response = runtime_requirements(
+        config_path="config/sonar.example.toml", db_path=str(tmp_path / "sonar.sqlite")
+    )
 
     assert response["database_path"] == str(tmp_path / "sonar.sqlite")
 
@@ -19,25 +36,124 @@ def test_build_server_lists_expected_tools():
     server = build_server()
     tool_names = set(server._tool_manager._tools.keys())
 
-    assert "sonar_health" in tool_names
-    assert "sonar_search" in tool_names
-    assert "sonar_fetch" in tool_names
-    assert "sonar_extract" in tool_names
-    assert "sonar_find_papers" in tool_names
-    assert "sonar_prepare_paper_set" in tool_names
-    assert "sonar_collect_sources_for_topic" in tool_names
+    assert tool_names == {
+        "health",
+        "search",
+        "fetch",
+        "extract",
+        "scrape",
+        "find_papers",
+        "prepare_paper_set",
+        "collect_sources_for_topic",
+    }
+
+
+def test_build_server_applies_streamable_http_settings():
+    server = build_server(
+        host="0.0.0.0",
+        port=8123,
+        path="/custom-mcp",
+        stateless_http=False,
+    )
+
+    assert server.settings.host == "0.0.0.0"
+    assert server.settings.port == 8123
+    assert server.settings.streamable_http_path == "/custom-mcp"
+    assert server.settings.stateless_http is False
+
+
+def test_stdio_transport_lists_real_server_tools():
+    async def list_tools():
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", "from sonar.mcp_server import main; main()"],
+            env={
+                **os.environ,
+                "SONAR_CONFIG": str(Path("config/sonar.example.toml").resolve()),
+                "SONAR_MCP_TRANSPORT": "stdio",
+            },
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                return [tool.name for tool in (await session.list_tools()).tools]
+
+    assert asyncio.run(list_tools()) == [
+        "health",
+        "search",
+        "fetch",
+        "scrape",
+        "extract",
+        "find_papers",
+        "prepare_paper_set",
+        "collect_sources_for_topic",
+    ]
+
+
+def test_streamable_http_transport_lists_real_server_tools():
+    port = _unused_tcp_port()
+    env = {
+        **os.environ,
+        "SONAR_CONFIG": str(Path("config/sonar.example.toml").resolve()),
+        "SONAR_MCP_TRANSPORT": "streamable-http",
+        "SONAR_MCP_HOST": "127.0.0.1",
+        "SONAR_MCP_PORT": str(port),
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-c", "from sonar.mcp_server import main; main()"],
+        cwd=Path.cwd(),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_tcp_port(port, process)
+
+        async def list_tools():
+            async with streamable_http_client(f"http://127.0.0.1:{port}/mcp") as (
+                read,
+                write,
+                _,
+            ):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    return [tool.name for tool in (await session.list_tools()).tools]
+
+        names = asyncio.run(list_tools())
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    assert "scrape" in names
+    assert "sonar_scrape" not in names
 
 
 def test_mcp_tool_descriptions_reflect_pdf_and_topic_filtering():
     server = build_server()
     tools = server._tool_manager._tools
 
-    assert "PDF" in tools["sonar_extract"].description
-    assert "semantic relevance pruning" in tools["sonar_collect_sources_for_topic"].description
+    assert "known URL" in tools["scrape"].description
+    assert (
+        "semantic relevance pruning" in tools["collect_sources_for_topic"].description
+    )
+
+
+def test_mcp_tool_schemas_hide_operator_only_paths():
+    server = build_server()
+    forbidden = {"config_path", "db_path", "output_dir"}
+
+    for tool in server._tool_manager._tools.values():
+        assert forbidden.isdisjoint(tool.parameters.get("properties", {}))
 
 
 def test_example_mcp_config_is_valid_json():
-    payload = json.loads(Path("config/sonar.mcp.example.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        Path("config/sonar.mcp.example.json").read_text(encoding="utf-8")
+    )
 
     assert "mcpServers" in payload
     assert payload["mcpServers"]["sonar"]["env"]["SONAR_MCP_TRANSPORT"] == "stdio"
@@ -50,14 +166,12 @@ def test_mcp_entrypoint_requires_config(monkeypatch):
         _require_server_config()
 
 
-def test_health_tool_uses_shared_runtime(tmp_path):
+def test_health_tool_uses_configured_runtime(monkeypatch):
+    monkeypatch.setenv("SONAR_CONFIG", "config/sonar.example.toml")
     server = build_server()
-    result = server._tool_manager._tools["sonar_health"].fn(
-        config_path="config/sonar.example.toml",
-        db_path=str(tmp_path / "sonar.sqlite"),
-    )
+    result = server._tool_manager._tools["health"].fn()
 
-    assert result["database_path"] == str(tmp_path / "sonar.sqlite")
+    assert result["database_path"].endswith(".sonar/sonar.sqlite")
 
 
 def test_extract_tool_wraps_pdf_capable_service(monkeypatch):
@@ -82,15 +196,126 @@ def test_extract_tool_wraps_pdf_capable_service(monkeypatch):
             from_cache=False,
         )
 
-    monkeypatch.setattr("sonar.mcp_server.extract_document_record", fake_extract_document_record)
+    monkeypatch.setattr(
+        "sonar.mcp_server.extract_document_record", fake_extract_document_record
+    )
 
-    result = server._tool_manager._tools["sonar_extract"].fn(url="https://example.com/paper.pdf", force_refresh=True)
+    result = server._tool_manager._tools["extract"].fn(
+        url="https://example.com/paper.pdf", force_refresh=True
+    )
 
     assert captured["request"].url == "https://example.com/paper.pdf"
     assert captured["request"].force_refresh is True
     assert result["source_format"] == "pdf"
     assert result["extraction_method"] == "pdf"
     assert result["text"] == "Full PDF text"
+
+
+def test_extract_tool_compacts_text_without_changing_word_count(monkeypatch):
+    server = build_server()
+    monkeypatch.setattr(
+        "sonar.mcp_server.extract_document_record",
+        lambda request: ExtractResponse(
+            document_id="doc",
+            canonical_url="https://example.com",
+            text="abcdefghij",
+            word_count=1,
+            from_cache=False,
+        ),
+    )
+
+    result = server._tool_manager._tools["extract"].fn(
+        url="https://example.com", max_chars=4
+    )
+
+    assert result["text"] == "abcd\n...[truncated]"
+    assert result["word_count"] == 1
+    assert "mcp_text_truncated" in result["retrieval_warnings"]
+
+
+def test_scrape_tool_requires_url_and_reuses_extract_service(monkeypatch):
+    server = build_server()
+    captured = {}
+
+    def fake_extract_document_record(request):
+        captured["request"] = request
+        return ExtractResponse(
+            document_id="doc",
+            canonical_url=request.url,
+            text="scraped text",
+            word_count=2,
+            retrieval_backend="cloakbrowser",
+            rendered=True,
+            from_cache=False,
+        )
+
+    monkeypatch.setattr(
+        "sonar.mcp_server.extract_document_record", fake_extract_document_record
+    )
+
+    tool = server._tool_manager._tools["scrape"]
+    result = tool.fn(url="https://example.com/app", force_refresh=True)
+
+    assert set(tool.parameters["required"]) == {"url"}
+    assert captured["request"].url == "https://example.com/app"
+    assert captured["request"].document_id is None
+    assert captured["request"].force_refresh is True
+    assert result["text"] == "scraped text"
+    assert result["retrieval_backend"] == "cloakbrowser"
+    assert result["rendered"] is True
+
+
+def test_unprefixed_paper_tools_call_service_functions(monkeypatch):
+    server = build_server()
+    calls = []
+
+    def fake_find(request):
+        calls.append(("find", request.query))
+        return FindPapersResponse(
+            query=request.query,
+            profile=request.profile,
+            direct_only=request.direct_only,
+            partial_results=False,
+            candidates=[],
+        )
+
+    def fake_prepare(request):
+        calls.append(("prepare", request.query))
+        bundle = PreparedSourceBundle(
+            bundle_id="bundle-empty",
+            created_at=1.0,
+            request_fingerprint="fingerprint",
+            query=request.query,
+            corpus="papers",
+            profile=request.profile,
+            direct_only=request.direct_only,
+            requested_count=request.count,
+            selected_count=0,
+            partial_results=True,
+            sources=[],
+        )
+        return PreparePaperSetResponse(
+            query=request.query,
+            profile=request.profile,
+            direct_only=request.direct_only,
+            requested_count=request.count,
+            selected_count=0,
+            partial_results=True,
+            sources=[],
+            bundle=bundle,
+        )
+
+    monkeypatch.setattr("sonar.mcp_server.service_find_papers", fake_find)
+    monkeypatch.setattr("sonar.mcp_server.service_prepare_paper_set", fake_prepare)
+
+    find_result = server._tool_manager._tools["find_papers"].fn(query="retrieval")
+    prepare_result = server._tool_manager._tools["prepare_paper_set"].fn(
+        query="retrieval", persist=False
+    )
+
+    assert calls == [("find", "retrieval"), ("prepare", "retrieval")]
+    assert find_result["query"] == "retrieval"
+    assert prepare_result["query"] == "retrieval"
 
 
 def test_collect_sources_tool_wraps_semantic_topic_collection(monkeypatch):
@@ -126,9 +351,11 @@ def test_collect_sources_tool_wraps_semantic_topic_collection(monkeypatch):
             ),
         )
 
-    monkeypatch.setattr("sonar.mcp_server.collect_sources_for_topic", fake_collect_sources_for_topic)
+    monkeypatch.setattr(
+        "sonar.mcp_server.collect_sources_for_topic", fake_collect_sources_for_topic
+    )
 
-    result = server._tool_manager._tools["sonar_collect_sources_for_topic"].fn(
+    result = server._tool_manager._tools["collect_sources_for_topic"].fn(
         topic="llm prompting",
         max_results=2,
         persist=False,
@@ -139,3 +366,22 @@ def test_collect_sources_tool_wraps_semantic_topic_collection(monkeypatch):
     assert captured["request"].persist is False
     assert result["selected_count"] == 1
     assert "low-relevance sources" in result["warnings"][0]
+
+
+def _unused_tcp_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_tcp_port(port: int, process: subprocess.Popen) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail(f"sonar-mcp exited with status {process.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    pytest.fail("sonar-mcp did not start its Streamable HTTP listener")

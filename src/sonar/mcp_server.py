@@ -17,41 +17,70 @@ from .service_api import (
     collect_sources_for_topic,
     extract_document_record,
     fetch_document_record,
-    find_papers,
-    prepare_paper_set,
+    find_papers as service_find_papers,
+    prepare_paper_set as service_prepare_paper_set,
     runtime_requirements as service_runtime_requirements,
     search_web,
 )
 from .settings import load_settings
 
 
-def runtime_requirements(config_path: str | None = None, db_path: str | None = None) -> dict[str, Any]:
-    return service_runtime_requirements(HealthRequest(config_path=config_path, db_path=db_path)).model_dump()
+def runtime_requirements(
+    config_path: str | None = None, db_path: str | None = None
+) -> dict[str, Any]:
+    return service_runtime_requirements(
+        HealthRequest(config_path=config_path, db_path=db_path)
+    ).model_dump()
 
 
-def build_server():
+MAX_MCP_TEXT_CHARS = 50_000
+DEFAULT_MCP_TEXT_CHARS = 12_000
+
+
+def build_server(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    path: str = "/mcp",
+    stateless_http: bool = True,
+):
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:  # pragma: no cover - installation path
-        raise RuntimeError("MCP support is not installed. Install Sonar with the 'mcp' extra.") from exc
+        raise RuntimeError(
+            "MCP support is not installed. Install Sonar with the 'mcp' extra."
+        ) from exc
 
     mcp = FastMCP(
         "Sonar",
         instructions=(
-            "Use Sonar for deterministic live-web evidence. Prefer explicit search, fetch, and extract steps for composable workflows, or use the paper-preparation tools when weak local models need fewer transitions and durable prepared-source bundles. PDF extraction is first-class, and topic collection can semantically prune low-relevance results when embeddings are configured."
+            "Use Sonar for deterministic live-web evidence. Normally search, "
+            "then scrape only selected URLs. When a URL is already known, call "
+            "scrape directly; no search or fetch call is required. Use extract "
+            "for cached document IDs and fetch only for metadata probes. Use "
+            "paper-preparation tools when fewer transitions and durable "
+            "prepared-source bundles are useful."
         ),
+        host=host,
+        port=port,
+        streamable_http_path=path,
+        stateless_http=stateless_http,
         json_response=True,
     )
 
-    @mcp.tool(name="sonar_health", description="Report Sonar runtime requirements and readiness")
-    def sonar_health(config_path: str | None = None, db_path: str | None = None) -> dict[str, Any]:
-        return runtime_requirements(config_path=config_path, db_path=db_path)
+    @mcp.tool(
+        name="health",
+        description="Report Sonar runtime readiness; use for diagnostics, not normal research",
+    )
+    def health() -> dict[str, Any]:
+        return runtime_requirements()
 
-    @mcp.tool(name="sonar_search", description="Search the live web through SearxNG and return ranked evidence")
-    def sonar_search(
+    @mcp.tool(
+        name="search",
+        description="Discover ranked candidate URLs through SearxNG; extract only selected results",
+    )
+    def search(
         query: str,
-        config_path: str | None = None,
-        db_path: str | None = None,
         limit: int | None = None,
         engines: list[str] | None = None,
         categories: list[str] | None = None,
@@ -62,8 +91,6 @@ def build_server():
         return search_web(
             SearchRequest(
                 query=query,
-                config_path=config_path,
-                db_path=db_path,
                 limit=limit,
                 engines=engines,
                 categories=categories,
@@ -73,55 +100,72 @@ def build_server():
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_fetch", description="Fetch one URL and cache its metadata")
-    def sonar_fetch(
+    @mcp.tool(
+        name="fetch",
+        description="Probe and cache URL metadata; usually call extract directly instead",
+    )
+    def fetch(
         url: str,
-        config_path: str | None = None,
-        db_path: str | None = None,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         return fetch_document_record(
             FetchRequest(
                 url=url,
-                config_path=config_path,
-                db_path=db_path,
                 force_refresh=force_refresh,
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_extract", description="Extract readable text from one cached or live URL, including PDF content into full extracted text")
-    def sonar_extract(
+    @mcp.tool(
+        name="scrape",
+        description="Retrieve and extract readable content from a known URL in one call; no search or fetch call is required",
+    )
+    def scrape(
+        url: str,
+        force_refresh: bool = False,
+        include_text: bool = True,
+        max_chars: int = DEFAULT_MCP_TEXT_CHARS,
+    ) -> dict[str, Any]:
+        return _extract_response(
+            url=url,
+            document_id=None,
+            force_refresh=force_refresh,
+            include_text=include_text,
+            max_chars=max_chars,
+        )
+
+    @mcp.tool(
+        name="extract",
+        description="Extract readable content from a URL or cached document ID; prefer scrape for a known URL",
+    )
+    def extract(
         url: str | None = None,
         document_id: str | None = None,
-        config_path: str | None = None,
-        db_path: str | None = None,
         force_refresh: bool = False,
+        include_text: bool = True,
+        max_chars: int = DEFAULT_MCP_TEXT_CHARS,
     ) -> dict[str, Any]:
-        return extract_document_record(
-            ExtractRequest(
-                url=url,
-                document_id=document_id,
-                config_path=config_path,
-                db_path=db_path,
-                force_refresh=force_refresh,
-            )
-        ).model_dump()
+        return _extract_response(
+            url=url,
+            document_id=document_id,
+            force_refresh=force_refresh,
+            include_text=include_text,
+            max_chars=max_chars,
+        )
 
-    @mcp.tool(name="sonar_find_papers", description="Return curated scientific paper candidates for a topic")
-    def sonar_find_papers(
+    @mcp.tool(
+        name="find_papers",
+        description="Discover curated scientific paper candidates without extracting every result",
+    )
+    def find_papers(
         query: str,
-        config_path: str | None = None,
-        db_path: str | None = None,
         count: int = 5,
         profile: str = "scientific",
         direct_only: bool = True,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
-        return find_papers(
+        return service_find_papers(
             FindPapersRequest(
                 query=query,
-                config_path=config_path,
-                db_path=db_path,
                 count=count,
                 profile=profile,
                 direct_only=direct_only,
@@ -129,41 +173,39 @@ def build_server():
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_prepare_paper_set", description="Search, filter, and extract a prepared scientific paper set in one call")
-    def sonar_prepare_paper_set(
+    @mcp.tool(
+        name="prepare_paper_set",
+        description="Search, filter, extract, and persist a scientific paper set in one call",
+    )
+    def prepare_paper_set(
         query: str,
-        config_path: str | None = None,
-        db_path: str | None = None,
         count: int = 5,
         profile: str = "scientific",
         direct_only: bool = True,
         force_refresh: bool = False,
         include_full_text: bool = True,
         persist: bool = True,
-        output_dir: str | None = None,
         include_sidecars: bool = True,
     ) -> dict[str, Any]:
-        return prepare_paper_set(
+        return service_prepare_paper_set(
             PreparePaperSetRequest(
                 query=query,
-                config_path=config_path,
-                db_path=db_path,
                 count=count,
                 profile=profile,
                 direct_only=direct_only,
                 force_refresh=force_refresh,
                 include_full_text=include_full_text,
                 persist=persist,
-                output_dir=output_dir,
                 include_sidecars=include_sidecars,
             )
         ).model_dump()
 
-    @mcp.tool(name="sonar_collect_sources_for_topic", description="Collect a compact structured source bundle for a topic, with semantic relevance pruning when embeddings are configured")
-    def sonar_collect_sources_for_topic(
+    @mcp.tool(
+        name="collect_sources_for_topic",
+        description="Collect, extract, apply semantic relevance pruning, and persist a compact source bundle for a topic",
+    )
+    def collect_sources_for_topic_tool(
         topic: str,
-        config_path: str | None = None,
-        db_path: str | None = None,
         max_results: int = 5,
         corpus: str = "papers",
         profile: str = "scientific",
@@ -171,14 +213,11 @@ def build_server():
         force_refresh: bool = False,
         include_full_text: bool = True,
         persist: bool = True,
-        output_dir: str | None = None,
         include_sidecars: bool = True,
     ) -> dict[str, Any]:
         return collect_sources_for_topic(
             CollectSourcesForTopicRequest(
                 topic=topic,
-                config_path=config_path,
-                db_path=db_path,
                 max_results=max_results,
                 corpus=corpus,
                 profile=profile,
@@ -186,7 +225,6 @@ def build_server():
                 force_refresh=force_refresh,
                 include_full_text=include_full_text,
                 persist=persist,
-                output_dir=output_dir,
                 include_sidecars=include_sidecars,
             )
         ).model_dump()
@@ -197,7 +235,12 @@ def build_server():
 def main() -> None:
     _require_server_config()
     transport = os.environ.get("SONAR_MCP_TRANSPORT", "stdio")
-    build_server().run(transport=transport)
+    build_server(
+        host=os.environ.get("SONAR_MCP_HOST", "127.0.0.1"),
+        port=int(os.environ.get("SONAR_MCP_PORT", "8000")),
+        path=os.environ.get("SONAR_MCP_PATH", "/mcp"),
+        stateless_http=_env_bool("SONAR_MCP_STATELESS_HTTP", True),
+    ).run(transport=transport)
 
 
 def _require_server_config() -> None:
@@ -209,3 +252,45 @@ def _require_server_config() -> None:
 
 def map_mcp_error(exc: SonarError) -> RuntimeError:
     return RuntimeError(str(exc.to_dict()))
+
+
+def _compact_extract_response(
+    payload: dict[str, Any], *, include_text: bool, max_chars: int
+) -> dict[str, Any]:
+    result = dict(payload)
+    warnings = list(result.get("retrieval_warnings", []))
+    limit = max(0, min(max_chars, MAX_MCP_TEXT_CHARS))
+    if max_chars > MAX_MCP_TEXT_CHARS:
+        warnings.append(f"mcp_max_chars_clamped_to_{MAX_MCP_TEXT_CHARS}")
+    text = str(result.get("text", ""))
+    if not include_text:
+        result.pop("text", None)
+    elif len(text) > limit:
+        result["text"] = text[:limit] + "\n...[truncated]"
+        warnings.append("mcp_text_truncated")
+    result["retrieval_warnings"] = list(dict.fromkeys(warnings))
+    return result
+
+
+def _extract_response(
+    *,
+    url: str | None,
+    document_id: str | None,
+    force_refresh: bool,
+    include_text: bool,
+    max_chars: int,
+) -> dict[str, Any]:
+    response = extract_document_record(
+        ExtractRequest(
+            url=url,
+            document_id=document_id,
+            force_refresh=force_refresh,
+        )
+    )
+    return _compact_extract_response(
+        response.model_dump(), include_text=include_text, max_chars=max_chars
+    )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    return str(os.environ.get(name, default)).lower() not in {"0", "false", "no", "off"}

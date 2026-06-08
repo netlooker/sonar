@@ -139,6 +139,33 @@ class Repository:
         self._ensure_column("documents", "extraction_method", "TEXT")
         self._ensure_column("documents", "extraction_status", "TEXT")
         self._ensure_column("documents", "abstract", "TEXT")
+        self._ensure_column("documents", "body", "BLOB")
+        self._ensure_column("documents", "body_hash", "TEXT")
+        self._ensure_column("documents", "body_expires_at", "REAL")
+        self._ensure_column("documents", "retrieval_backend", "TEXT")
+        self._ensure_column("documents", "rendered", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(
+            "documents", "retrieval_attempts_json", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        self._ensure_column(
+            "documents", "retrieval_warnings_json", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        self._ensure_column("documents", "fallback_reason", "TEXT")
+        self._ensure_column("prepared_bundle_sources", "retrieval_backend", "TEXT")
+        self._ensure_column(
+            "prepared_bundle_sources", "rendered", "INTEGER NOT NULL DEFAULT 0"
+        )
+        self._ensure_column(
+            "prepared_bundle_sources",
+            "retrieval_attempts_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column(
+            "prepared_bundle_sources",
+            "retrieval_warnings_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column("prepared_bundle_sources", "fallback_reason", "TEXT")
         self.conn.commit()
 
     def upsert_domain_priors(self, priors: dict[str, float]) -> None:
@@ -153,7 +180,9 @@ class Repository:
         rows = self.conn.execute("SELECT domain, weight FROM domain_priors").fetchall()
         return {str(row["domain"]): float(row["weight"]) for row in rows}
 
-    def get_cached_search(self, signature: str, now: float) -> tuple[SearchRunRow, list[dict[str, object]]] | None:
+    def get_cached_search(
+        self, signature: str, now: float
+    ) -> tuple[SearchRunRow, list[dict[str, object]]] | None:
         row = self.conn.execute(
             "SELECT * FROM search_runs WHERE signature = ? AND expires_at > ?",
             (signature, now),
@@ -253,13 +282,23 @@ class Repository:
         fetch_expires_at: float,
         extractable: bool,
         source_format: str | None = None,
+        body: bytes | None = None,
+        body_hash: str | None = None,
+        body_expires_at: float | None = None,
+        retrieval_backend: str | None = None,
+        rendered: bool = False,
+        retrieval_attempts: list[str] | None = None,
+        retrieval_warnings: list[str] | None = None,
+        fallback_reason: str | None = None,
     ) -> None:
         self.conn.execute(
             """
             INSERT INTO documents(
                 document_id, url, canonical_url, final_url, status, status_code, content_type,
-                fetched_at, fetch_expires_at, extractable, source_format
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fetched_at, fetch_expires_at, extractable, source_format, body, body_hash,
+                body_expires_at, retrieval_backend, rendered, retrieval_attempts_json,
+                retrieval_warnings_json, fallback_reason
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(canonical_url) DO UPDATE SET
                 document_id=excluded.document_id,
                 url=excluded.url,
@@ -270,7 +309,15 @@ class Repository:
                 fetched_at=excluded.fetched_at,
                 fetch_expires_at=excluded.fetch_expires_at,
                 extractable=excluded.extractable,
-                source_format=excluded.source_format
+                source_format=excluded.source_format,
+                body=excluded.body,
+                body_hash=excluded.body_hash,
+                body_expires_at=excluded.body_expires_at,
+                retrieval_backend=excluded.retrieval_backend,
+                rendered=excluded.rendered,
+                retrieval_attempts_json=excluded.retrieval_attempts_json,
+                retrieval_warnings_json=excluded.retrieval_warnings_json,
+                fallback_reason=excluded.fallback_reason
             """,
             (
                 document_id,
@@ -284,6 +331,14 @@ class Repository:
                 fetch_expires_at,
                 int(extractable),
                 source_format,
+                body,
+                body_hash,
+                body_expires_at,
+                retrieval_backend,
+                int(rendered),
+                json.dumps(retrieval_attempts or []),
+                json.dumps(retrieval_warnings or []),
+                fallback_reason,
             ),
         )
         self.conn.commit()
@@ -368,8 +423,9 @@ class Repository:
                 bundle_id, source_id, document_id, origin_url, url, direct_paper_url, title, authors_json,
                 author_raw, published, source_type, retrieved_at, selection_reason, confidence, summary,
                 abstract, full_text_path, extraction_status, extraction_method, content_type, search_score,
-                search_snippet, from_search_cache, from_extract_cache, source_warnings_json
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                search_snippet, from_search_cache, from_extract_cache, source_warnings_json,
+                retrieval_backend, rendered, retrieval_attempts_json, retrieval_warnings_json, fallback_reason
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -398,6 +454,11 @@ class Repository:
                     int(bool(source["from_search_cache"])),
                     int(bool(source["from_extract_cache"])),
                     json.dumps(source.get("source_warnings", [])),
+                    source.get("retrieval_backend"),
+                    int(bool(source.get("rendered", False))),
+                    json.dumps(source.get("retrieval_attempts", [])),
+                    json.dumps(source.get("retrieval_warnings", [])),
+                    source.get("fallback_reason"),
                 )
                 for source in bundle.get("sources", [])
             ],
@@ -457,6 +518,11 @@ class Repository:
                     "from_search_cache": bool(source["from_search_cache"]),
                     "from_extract_cache": bool(source["from_extract_cache"]),
                     "source_warnings": json.loads(source["source_warnings_json"]),
+                    "retrieval_backend": source["retrieval_backend"],
+                    "rendered": bool(source["rendered"]),
+                    "retrieval_attempts": json.loads(source["retrieval_attempts_json"]),
+                    "retrieval_warnings": json.loads(source["retrieval_warnings_json"]),
+                    "fallback_reason": source["fallback_reason"],
                 }
                 for source in source_rows
             ],

@@ -17,7 +17,18 @@ extract_ttl_seconds = 86400
 connect_timeout_seconds = 10.0
 read_timeout_seconds = 20.0
 max_body_bytes = 2097152
-user_agent = "Sonar/0.1"
+user_agent = "Sonar/0.3"
+
+[retrieval]
+scrapling_enabled = false
+browser_enabled = false
+cloakbrowser_enabled = false
+thin_text_min_chars = 200
+browser_wait_until = "domcontentloaded"
+
+[policy]
+respect_robots = true
+deny_local_networks = true
 
 [search]
 default_limit = 8
@@ -32,6 +43,10 @@ similarity_threshold = 0.35
 [ranking.domain_priors]
 "docs.python.org" = 0.35
 "wikipedia.org" = 0.10
+
+# [domains."example.com"]
+# allow = true
+# allowed_backends = ["http", "scrapling_http"]
 
 [secrets]
 overlay_path = "secrets/sonar.secrets.toml"

@@ -84,6 +84,11 @@ def test_repository_stores_prepared_bundle_registry(tmp_path):
                     "from_search_cache": False,
                     "from_extract_cache": True,
                     "source_warnings": [],
+                    "retrieval_backend": "cloakbrowser",
+                    "rendered": True,
+                    "retrieval_attempts": ["http", "cloakbrowser"],
+                    "retrieval_warnings": ["thin_text_triggered_cloakbrowser_fallback"],
+                    "fallback_reason": "thin_text",
                 }
             ],
         }
@@ -94,4 +99,144 @@ def test_repository_stores_prepared_bundle_registry(tmp_path):
 
     assert stored is not None
     assert stored["bundle_id"] == "bundle-1"
-    assert stored["sources"][0]["source_id"] == "source-1"
+    source = stored["sources"][0]
+    assert source["source_id"] == "source-1"
+    assert source["retrieval_backend"] == "cloakbrowser"
+    assert source["rendered"] is True
+    assert source["retrieval_attempts"] == ["http", "cloakbrowser"]
+    assert source["retrieval_warnings"] == ["thin_text_triggered_cloakbrowser_fallback"]
+    assert source["fallback_reason"] == "thin_text"
+
+
+def test_repository_stores_document_body_and_retrieval_provenance(tmp_path):
+    repo = Repository(tmp_path / "sonar.sqlite")
+    repo.initialize()
+    repo.store_document_fetch(
+        document_id="doc-1",
+        url="https://example.com",
+        canonical_url="https://example.com/",
+        final_url="https://example.com/",
+        status="fetched",
+        status_code=200,
+        content_type="text/html",
+        fetched_at=1.0,
+        fetch_expires_at=100.0,
+        extractable=True,
+        source_format="html",
+        body=b"<html>body</html>",
+        body_hash="hash",
+        body_expires_at=100.0,
+        retrieval_backend="cloakbrowser",
+        rendered=True,
+        retrieval_attempts=["http", "scrapling_http", "cloakbrowser"],
+        retrieval_warnings=["thin_text_triggered_cloakbrowser_fallback"],
+        fallback_reason="thin_text",
+    )
+
+    row = repo.get_document_by_id("doc-1")
+    repo.close()
+
+    assert row is not None
+    assert bytes(row["body"]) == b"<html>body</html>"
+    assert row["retrieval_backend"] == "cloakbrowser"
+    assert bool(row["rendered"]) is True
+    assert row["fallback_reason"] == "thin_text"
+
+
+def test_repository_migrates_legacy_documents_table_additively(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            document_id TEXT PRIMARY KEY, url TEXT NOT NULL, canonical_url TEXT NOT NULL UNIQUE,
+            final_url TEXT NOT NULL, status TEXT NOT NULL, status_code INTEGER NOT NULL,
+            content_type TEXT NOT NULL, fetched_at REAL NOT NULL, fetch_expires_at REAL NOT NULL,
+            extractable INTEGER NOT NULL, title TEXT, byline TEXT, published_at TEXT, language TEXT,
+            excerpt TEXT, text TEXT, word_count INTEGER, extract_hash TEXT, extract_expires_at REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE prepared_bundle_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            document_id TEXT,
+            origin_url TEXT NOT NULL,
+            url TEXT NOT NULL,
+            direct_paper_url TEXT,
+            title TEXT NOT NULL,
+            authors_json TEXT NOT NULL,
+            author_raw TEXT,
+            published TEXT,
+            source_type TEXT NOT NULL,
+            retrieved_at REAL NOT NULL,
+            selection_reason TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            summary TEXT,
+            abstract TEXT,
+            full_text_path TEXT,
+            extraction_status TEXT NOT NULL,
+            extraction_method TEXT NOT NULL,
+            content_type TEXT,
+            search_score REAL NOT NULL,
+            search_snippet TEXT NOT NULL,
+            from_search_cache INTEGER NOT NULL,
+            from_extract_cache INTEGER NOT NULL,
+            source_warnings_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents(document_id, url, canonical_url, final_url, status, status_code, content_type, fetched_at, fetch_expires_at, extractable) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "legacy",
+            "https://example.com",
+            "https://example.com/",
+            "https://example.com/",
+            "fetched",
+            200,
+            "text/html",
+            1.0,
+            2.0,
+            1,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    repo = Repository(path)
+    repo.initialize()
+    row = repo.get_document_by_id("legacy")
+    columns = {
+        item["name"]
+        for item in repo.conn.execute("PRAGMA table_info(documents)").fetchall()
+    }
+    prepared_columns = {
+        item["name"]
+        for item in repo.conn.execute(
+            "PRAGMA table_info(prepared_bundle_sources)"
+        ).fetchall()
+    }
+    repo.close()
+
+    assert row is not None
+    assert row["retrieval_backend"] is None
+    assert bool(row["rendered"]) is False
+    assert {
+        "body",
+        "retrieval_backend",
+        "retrieval_attempts_json",
+        "fallback_reason",
+    }.issubset(columns)
+    assert {
+        "retrieval_backend",
+        "rendered",
+        "retrieval_attempts_json",
+        "retrieval_warnings_json",
+        "fallback_reason",
+    }.issubset(prepared_columns)

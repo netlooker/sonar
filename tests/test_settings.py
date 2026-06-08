@@ -16,6 +16,10 @@ def test_load_settings_reads_example_defaults():
     assert settings.cache.search_ttl_seconds == 900
     assert settings.cache.extract_ttl_seconds == 86400
     assert settings.fetch.max_body_bytes == 2097152
+    assert settings.retrieval.scrapling_enabled is False
+    assert settings.retrieval.browser_enabled is False
+    assert settings.policy.respect_robots is True
+    assert settings.policy.deny_local_networks is True
     assert settings.embeddings.enabled is True
     assert settings.embeddings.model == "text-embedding-3-small"
     assert settings.embeddings.similarity_threshold == 0.35
@@ -39,7 +43,9 @@ def test_load_settings_raises_for_missing_explicit_config():
 def test_load_settings_applies_secret_overlay(tmp_path, monkeypatch):
     config = tmp_path / "sonar.toml"
     secrets = tmp_path / "secret.toml"
-    secrets.write_text("[searxng]\nauthorization_header = 'Bearer local'\n", encoding="utf-8")
+    secrets.write_text(
+        "[searxng]\nauthorization_header = 'Bearer local'\n", encoding="utf-8"
+    )
     config.write_text(
         f"[secrets]\noverlay_path = '{secrets}'\n\n[searxng]\nbase_url = 'http://localhost:9999'\n",
         encoding="utf-8",
@@ -66,7 +72,9 @@ def test_load_settings_applies_env_overrides(monkeypatch):
 def test_load_settings_prefers_project_config_location(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "sonar.toml").write_text("[http]\nport = 9001\n", encoding="utf-8")
+    (tmp_path / "config" / "sonar.toml").write_text(
+        "[http]\nport = 9001\n", encoding="utf-8"
+    )
     (tmp_path / "sonar.toml").write_text("[http]\nport = 9002\n", encoding="utf-8")
 
     settings = load_settings()

@@ -12,6 +12,7 @@ Sonar v1 is intentionally narrow:
 - external SearxNG for metasearch
 - deterministic query planning and ranking
 - cached fetch and extraction artifacts in SQLite
+- optional policy-aware Scrapling and CloakBrowser fallback for difficult HTML
 - multi-format document extraction for HTML, PDF, DOCX, ODT, Markdown, and text
 - durable prepared-source bundle persistence for high-level research flows
 - thin HTTP/OpenAPI and MCP adapters
@@ -53,6 +54,14 @@ uv run sonar-api
 SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml uv run sonar-mcp
 ```
 
+For a remote MCP endpoint:
+
+```bash
+SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml \
+SONAR_MCP_TRANSPORT=streamable-http \
+uv run sonar-mcp
+```
+
 ## Container
 
 Build the API image:
@@ -72,6 +81,12 @@ docker run --rm -p 8001:8001 \
 ```
 
 For containers, point the database path in `config/sonar.toml` at a mounted location such as `/data/sonar.sqlite`.
+
+Build the optional browser-capable Streamable HTTP MCP image with:
+
+```bash
+docker build --target browser-runtime -t sonar:browser .
+```
 
 ## Compose
 
@@ -110,12 +125,21 @@ MCP tools:
 - `sonar_health`
 - `sonar_search`
 - `sonar_fetch`
+- `sonar_scrape`
 - `sonar_extract`
 - `sonar_find_papers`
 - `sonar_prepare_paper_set`
 - `sonar_collect_sources_for_topic`
 
-The low-level search/fetch/extract tools remain the canonical composable API.
+The raw MCP tool names are unprefixed (`health`, `search`, `scrape`, and so
+on). Most clients prepend the configured connection name, so an OpenCode
+connection named `sonar` displays `sonar_search` rather than
+`sonar_sonar_search`.
+
+Call `scrape` directly when a URL is already known. The normal discovery
+workflow is search followed by scrape for selected URLs. `extract` also
+supports cached document IDs; fetch is available for metadata probes and cache
+warming but is not required before scrape or extract.
 The paper-preparation tools collapse the retrieval loop for weaker local runtimes and return structured source bundles instead of requiring repeated orchestration.
 `prepare-paper-set` and `collect-sources` now auto-persist durable prepared bundles by default, including a JSON manifest and optional text sidecars for extracted source content.
 `collect-sources` over-collects paper candidates, then prunes low-relevance items with semantic similarity before returning and persisting the final bundle. If embeddings are unavailable, the filter is skipped and a warning is returned instead.

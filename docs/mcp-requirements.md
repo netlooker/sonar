@@ -2,20 +2,31 @@
 
 Sonar MCP exposes the same deterministic service layer used by HTTP.
 
-Initial tool surface:
+Raw MCP tool surface:
 
-- `sonar_health`
-- `sonar_search`
-- `sonar_fetch`
-- `sonar_extract`
-- `sonar_find_papers`
-- `sonar_prepare_paper_set`
-- `sonar_collect_sources_for_topic`
+- `health`
+- `search`
+- `fetch`
+- `extract`
+- `scrape`
+- `find_papers`
+- `prepare_paper_set`
+- `collect_sources_for_topic`
 
 Tool roles:
 
-- `sonar_search`, `sonar_fetch`, and `sonar_extract` stay as the canonical composable MCP API.
-- `sonar_find_papers`, `sonar_prepare_paper_set`, and `sonar_collect_sources_for_topic` provide a smaller workflow surface for weaker local models by collapsing search, filtering, and extraction into fewer interactions.
+- MCP clients commonly namespace these names with the configured connection
+  name. An OpenCode connection named `sonar` therefore exposes `sonar_search`,
+  not `sonar_sonar_search`.
+- Call `scrape` directly when the URL is already known. The normal discovery
+  workflow is `search` followed by `scrape` for selected URLs.
+- `extract` supports both URLs and cached document IDs. `fetch` is a metadata
+  probe and is not required before `scrape` or `extract`.
+- Operator-only paths and configuration overrides are not exposed to agents.
+- Stdio remains the default transport; Streamable HTTP is supported at `/mcp`.
+- `scrape` and `extract` default to returning at most 12,000 text characters
+  to reduce agent context pressure. Agents can set `include_text=false` or
+  adjust `max_chars` up to the 50,000-character hard limit.
 
 Runtime requirements:
 
@@ -23,3 +34,9 @@ Runtime requirements:
 - reachable SearxNG instance
 - writable SQLite database path
 - local `SONAR_CONFIG` file
+
+Streamable HTTP environment:
+
+- `SONAR_MCP_TRANSPORT=streamable-http`
+- `SONAR_MCP_HOST`, `SONAR_MCP_PORT`, and `SONAR_MCP_PATH`
+- `SONAR_MCP_STATELESS_HTTP` defaults to `true`

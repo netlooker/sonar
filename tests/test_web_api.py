@@ -1,17 +1,18 @@
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from sonar.errors import SonarForbiddenError
-from sonar.service_api import (
+from sonar.errors import SonarForbiddenError  # noqa: E402
+from sonar.service_api import (  # noqa: E402
+    ExtractResponse,
     PreparePaperSetResponse,
     PreparedBundleSource,
     PreparedSourceBundle,
     SearchResponse,
     SearchResult,
 )
-from sonar.web_api import create_app
+from sonar.web_api import create_app  # noqa: E402
 
 
 def test_openapi_exposes_sonar_routes():
@@ -33,7 +34,13 @@ def test_openapi_exposes_sonar_routes():
 def test_health_endpoint_reports_runtime(tmp_path):
     client = TestClient(create_app())
 
-    response = client.get("/health", params={"config_path": "config/sonar.example.toml", "db_path": str(tmp_path / "sonar.sqlite")})
+    response = client.get(
+        "/health",
+        params={
+            "config_path": "config/sonar.example.toml",
+            "db_path": str(tmp_path / "sonar.sqlite"),
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["database_path"] == str(tmp_path / "sonar.sqlite")
@@ -79,6 +86,38 @@ def test_fetch_endpoint_maps_structured_error(monkeypatch):
 
     assert response.status_code == 403
     assert response.json()["detail"]["error_type"] == "forbidden"
+
+
+def test_extract_endpoint_serializes_retrieval_provenance(monkeypatch):
+    expected = ExtractResponse(
+        document_id="doc-1",
+        canonical_url="https://example.com/app",
+        text="Rendered content",
+        word_count=2,
+        content_type="text/html",
+        source_format="html",
+        extraction_method="html",
+        extraction_status="full",
+        retrieval_backend="cloakbrowser",
+        rendered=True,
+        retrieval_attempts=["http", "cloakbrowser"],
+        retrieval_warnings=["thin_text_triggered_cloakbrowser_fallback"],
+        fallback_reason="thin_text",
+        from_cache=False,
+    )
+    monkeypatch.setattr(
+        "sonar.web_api.extract_document_record", lambda request: expected
+    )
+    client = TestClient(create_app())
+
+    response = client.post("/extract", json={"url": "https://example.com/app"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["retrieval_backend"] == "cloakbrowser"
+    assert payload["rendered"] is True
+    assert payload["retrieval_attempts"] == ["http", "cloakbrowser"]
+    assert payload["fallback_reason"] == "thin_text"
 
 
 def test_prepare_paper_set_endpoint_uses_shared_service(monkeypatch):
