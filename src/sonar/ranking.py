@@ -52,7 +52,9 @@ def query_signature(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def rank_results(results: list[dict[str, object]], query: str, domain_priors: dict[str, float]) -> list[dict[str, object]]:
+def rank_results(
+    results: list[dict[str, object]], query: str, domain_priors: dict[str, float]
+) -> list[dict[str, object]]:
     query_terms = {token.lower() for token in query.split() if token}
     ranked: list[dict[str, object]] = []
     for result in results:
@@ -78,7 +80,9 @@ def dedupe_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
     for result in results:
         canonical_url = str(result["canonical_url"])
         current = deduped.get(canonical_url)
-        if current is None or float(result.get("score", 0.0)) > float(current.get("score", 0.0)):
+        if current is None or float(result.get("score", 0.0)) > float(
+            current.get("score", 0.0)
+        ):
             deduped[canonical_url] = result
     return list(deduped.values())
 

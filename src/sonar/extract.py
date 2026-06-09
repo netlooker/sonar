@@ -10,12 +10,18 @@ from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
 
-from .errors import SonarBadRequestError, SonarDependencyError, SonarUpstreamUnavailableError
+from .errors import (
+    SonarBadRequestError,
+    SonarDependencyError,
+    SonarUpstreamUnavailableError,
+)
 
 
 HTML_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 PDF_CONTENT_TYPES = {"application/pdf"}
-DOCX_CONTENT_TYPES = {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+DOCX_CONTENT_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
 ODT_CONTENT_TYPES = {"application/vnd.oasis.opendocument.text"}
 MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 TEXT_CONTENT_TYPES = {"text/plain"}
@@ -38,7 +44,9 @@ class ExtractArtifact:
     extraction_status: str
 
 
-def extract_document(body: bytes, *, url: str, content_type: str | None = None) -> ExtractArtifact:
+def extract_document(
+    body: bytes, *, url: str, content_type: str | None = None
+) -> ExtractArtifact:
     source_format = detect_source_format(url=url, content_type=content_type)
     if source_format == "html":
         return _extract_html_document(body, url=url)
@@ -112,11 +120,15 @@ def _extract_html_document(body: bytes, *, url: str) -> ExtractArtifact:
         include_tables=False,
     )
     if not payload:
-        raise SonarUpstreamUnavailableError("Readable text extraction returned no content.", retryable=False)
+        raise SonarUpstreamUnavailableError(
+            "Readable text extraction returned no content.", retryable=False
+        )
     parsed = json.loads(payload)
     text = str(parsed.get("text", "")).strip()
     if not text:
-        raise SonarUpstreamUnavailableError("Readable text extraction returned empty text.", retryable=False)
+        raise SonarUpstreamUnavailableError(
+            "Readable text extraction returned empty text.", retryable=False
+        )
     excerpt = _nullable_str(parsed.get("excerpt"))
     return ExtractArtifact(
         canonical_url=str(parsed.get("url", url)),
@@ -130,7 +142,9 @@ def _extract_html_document(body: bytes, *, url: str) -> ExtractArtifact:
         word_count=len(text.split()),
         source_format="html",
         extraction_method="html",
-        extraction_status=_extraction_status_for_text(text=text, title=_nullable_str(parsed.get("title"))),
+        extraction_status=_extraction_status_for_text(
+            text=text, title=_nullable_str(parsed.get("title"))
+        ),
     )
 
 
@@ -147,13 +161,17 @@ def _extract_pdf_document(body: bytes, *, url: str) -> ExtractArtifact:
     try:
         document = pymupdf.open(stream=BytesIO(body), filetype="pdf")
     except Exception as exc:
-        raise SonarUpstreamUnavailableError("PDF extraction failed.", retryable=False) from exc
+        raise SonarUpstreamUnavailableError(
+            "PDF extraction failed.", retryable=False
+        ) from exc
 
     try:
         texts = [(page.get_text("text") or "").strip() for page in document]
         text = "\n\n".join(chunk for chunk in texts if chunk)
         if not text.strip():
-            raise SonarUpstreamUnavailableError("PDF extraction returned empty text.", retryable=False)
+            raise SonarUpstreamUnavailableError(
+                "PDF extraction returned empty text.", retryable=False
+            )
         metadata = document.metadata or {}
         abstract = _extract_abstract_section(text)
         title = _nullable_str(metadata.get("title"))
@@ -220,7 +238,9 @@ def _extract_markdown_document(body: bytes, *, url: str) -> ExtractArtifact:
     text = body.decode("utf-8", errors="ignore")
     normalized = _normalize_text(text)
     if not normalized:
-        raise SonarUpstreamUnavailableError("Markdown extraction returned empty text.", retryable=False)
+        raise SonarUpstreamUnavailableError(
+            "Markdown extraction returned empty text.", retryable=False
+        )
     title = _extract_markdown_title(text) or _title_from_text(url=url, text=normalized)
     abstract = _extract_abstract_section(normalized)
     return ExtractArtifact(
@@ -242,7 +262,9 @@ def _extract_markdown_document(body: bytes, *, url: str) -> ExtractArtifact:
 def _extract_text_document(body: bytes, *, url: str) -> ExtractArtifact:
     text = _normalize_text(body.decode("utf-8", errors="ignore"))
     if not text:
-        raise SonarUpstreamUnavailableError("Text extraction returned empty text.", retryable=False)
+        raise SonarUpstreamUnavailableError(
+            "Text extraction returned empty text.", retryable=False
+        )
     title = _title_from_text(url=url, text=text)
     abstract = _extract_abstract_section(text)
     return ExtractArtifact(
@@ -265,12 +287,16 @@ def _extract_zip_text(body: bytes, *, member: str) -> str:
     try:
         archive = zipfile.ZipFile(BytesIO(body))
     except zipfile.BadZipFile as exc:
-        raise SonarUpstreamUnavailableError("Archive extraction failed.", retryable=False) from exc
+        raise SonarUpstreamUnavailableError(
+            "Archive extraction failed.", retryable=False
+        ) from exc
     try:
         with archive.open(member) as handle:
             xml_text = handle.read().decode("utf-8", errors="ignore")
     except KeyError as exc:
-        raise SonarUpstreamUnavailableError("Expected document payload was missing.", retryable=False) from exc
+        raise SonarUpstreamUnavailableError(
+            "Expected document payload was missing.", retryable=False
+        ) from exc
     root = ElementTree.fromstring(xml_text)
     fragments = []
     for text_node in root.iter():
@@ -278,7 +304,9 @@ def _extract_zip_text(body: bytes, *, member: str) -> str:
             fragments.append(text_node.text.strip())
     text = _normalize_text("\n".join(fragments))
     if not text:
-        raise SonarUpstreamUnavailableError("Structured document extraction returned empty text.", retryable=False)
+        raise SonarUpstreamUnavailableError(
+            "Structured document extraction returned empty text.", retryable=False
+        )
     return text
 
 

@@ -66,7 +66,9 @@ def _resolve_bundle_dir(*, bundle_id: str, output_dir: str | None) -> Path:
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    with NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, delete=False
+    ) as handle:
         handle.write(json.dumps(payload, indent=2))
         tmp_path = Path(handle.name)
     tmp_path.replace(path)

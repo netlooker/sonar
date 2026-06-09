@@ -1,114 +1,73 @@
 # Sonar
 
-Sonar is a deterministic live-web search, fetch, and extraction service for agents.
+Sonar is a deterministic live-web search, retrieval, and extraction service for
+agents. It exposes a focused MCP and HTTP surface backed by SearxNG, SQLite
+caching, multi-format extraction, and optional resilient retrieval for difficult
+HTML.
 
-It complements local-memory systems such as Synapse:
+Use Sonar when an agent needs fresh web evidence without placing an LLM in the
+retrieval path.
 
-- Synapse owns private memory and semantic retrieval.
-- Sonar owns fresh external evidence from the web.
+## Capabilities
 
-Sonar v1 is intentionally narrow:
+- Ranked and deduplicated web search through SearxNG
+- One-call MCP scraping for known URLs
+- Extraction from HTML, PDF, DOCX, ODT, Markdown, and plain text
+- Optional Scrapling and CloakBrowser fallback for difficult HTML
+- Policy-aware retrieval with robots and local-network protections
+- Durable prepared-source bundles for research workflows
+- Stdio and Streamable HTTP MCP transports
+- JSON HTTP API with a tracked [OpenAPI schema](docs/openapi.json)
 
-- external SearxNG for metasearch
-- deterministic query planning and ranking
-- cached fetch and extraction artifacts in SQLite
-- optional policy-aware Scrapling and CloakBrowser fallback for difficult HTML
-- multi-format document extraction for HTML, PDF, DOCX, ODT, Markdown, and text
-- durable prepared-source bundle persistence for high-level research flows
-- thin HTTP/OpenAPI and MCP adapters
-- optional high-level paper-preparation facade for weaker local agents
-- no LLM reasoning layer in the core path
+## Five-Minute MCP Start
 
-Notable high-level behavior:
+Requirements: Docker with Compose.
 
-- PDF responses and direct `.pdf` URLs are extracted with `pymupdf` and carried through to prepared bundle `full_text`
-- `collect-sources` applies a semantic relevance filter over collected source abstracts/summaries before returning the final source list
-
-## Quick Start
-
-1. Install the project:
+Start Sonar MCP and its SearxNG dependency:
 
 ```bash
-uv sync --extra dev
+docker compose --profile mcp up --build sonar-mcp
 ```
 
-2. Copy the tracked config template:
+Sonar is now available over Streamable HTTP at
+`http://127.0.0.1:8000/mcp`.
+
+For OpenCode, merge the contents of
+[`config/opencode.mcp.example.json`](config/opencode.mcp.example.json) into your
+OpenCode configuration, then verify the connection:
 
 ```bash
-cp config/sonar.example.toml config/sonar.toml
+opencode mcp list
 ```
 
-3. Adjust local values in `config/sonar.toml` and optional overlays in `secrets/`.
+Ask the agent to check `sonar_health`, search for a topic with `sonar_search`,
+and scrape one selected result with `sonar_scrape`.
 
-   If you want topic relevance filtering in `collect-sources`, also configure an embeddings API key through `OPENAI_API_KEY` or `SONAR_EMBEDDINGS_API_KEY`.
-
-4. Start the API:
+Stop the stack with:
 
 ```bash
-uv run sonar-api
+docker compose --profile mcp down
 ```
 
-5. Or start the MCP server:
+See [Getting Started](docs/getting-started.md) for local stdio MCP, the HTTP API,
+configuration, and troubleshooting.
 
-```bash
-SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml uv run sonar-mcp
-```
+## Tool Surface
 
-For a remote MCP endpoint:
+MCP tools:
 
-```bash
-SONAR_CONFIG=/ABSOLUTE/PATH/TO/config/sonar.toml \
-SONAR_MCP_TRANSPORT=streamable-http \
-uv run sonar-mcp
-```
+- `health`
+- `search`
+- `fetch`
+- `scrape`
+- `extract`
+- `find_papers`
+- `prepare_paper_set`
+- `collect_sources_for_topic`
 
-## Container
-
-Build the API image:
-
-```bash
-docker build -t sonar:latest .
-```
-
-Run it with a local config mounted into `/app/config/sonar.toml`:
-
-```bash
-docker run --rm -p 8001:8001 \
-  -e SONAR_CONFIG=/app/config/sonar.toml \
-  -v "$(pwd)/config/sonar.toml:/app/config/sonar.toml:ro" \
-  -v sonar-data:/data \
-  sonar:latest
-```
-
-For containers, point the database path in `config/sonar.toml` at a mounted location such as `/data/sonar.sqlite`.
-
-Build the optional browser-capable Streamable HTTP MCP image with:
-
-```bash
-docker build --target browser-runtime -t sonar:browser .
-```
-
-## Compose
-
-Run Sonar together with a dedicated SearxNG service:
-
-```bash
-docker compose up --build
-```
-
-This stack uses:
-
-- Sonar API on `http://127.0.0.1:8001`
-- SearxNG as an internal service at `http://searxng:8080`
-- a named Docker volume for Sonar's SQLite state
-
-Tracked local-stack files:
-
-- `docker-compose.yml`
-- `config/sonar.compose.example.toml`
-- `searxng/settings.yml`
-
-## Surface
+MCP clients commonly prefix tools with the configured connection name. An
+OpenCode connection named `sonar` therefore exposes `sonar_search` and
+`sonar_scrape`.
 
 HTTP routes:
 
@@ -120,56 +79,27 @@ HTTP routes:
 - `POST /prepare-paper-set`
 - `POST /collect-sources`
 
-MCP tools:
+## Deployment Choices
 
-- `sonar_health`
-- `sonar_search`
-- `sonar_fetch`
-- `sonar_scrape`
-- `sonar_extract`
-- `sonar_find_papers`
-- `sonar_prepare_paper_set`
-- `sonar_collect_sources_for_topic`
+- **Compose MCP:** fastest path for agent integrations.
+- **Local stdio MCP:** best when a client should launch Sonar directly.
+- **HTTP API:** suitable for applications that do not use MCP.
+- **Browser runtime image:** includes optional resilient retrieval dependencies.
 
-The raw MCP tool names are unprefixed (`health`, `search`, `scrape`, and so
-on). Most clients prepend the configured connection name, so an OpenCode
-connection named `sonar` displays `sonar_search` rather than
-`sonar_sonar_search`.
+The default installation and image remain lightweight. Browser fallback is
+opt-in and applies only to difficult HTML; non-HTML documents never use it.
+Policy and robots denials are terminal.
 
-Call `scrape` directly when a URL is already known. The normal discovery
-workflow is search followed by scrape for selected URLs. `extract` also
-supports cached document IDs; fetch is available for metadata probes and cache
-warming but is not required before scrape or extract.
-The paper-preparation tools collapse the retrieval loop for weaker local runtimes and return structured source bundles instead of requiring repeated orchestration.
-`prepare-paper-set` and `collect-sources` now auto-persist durable prepared bundles by default, including a JSON manifest and optional text sidecars for extracted source content.
-`collect-sources` over-collects paper candidates, then prunes low-relevance items with semantic similarity before returning and persisting the final bundle. If embeddings are unavailable, the filter is skipped and a warning is returned instead.
+## Documentation
 
-## Config Notes
-
-Important extraction and topic-filter settings:
-
-- `fetch.max_body_bytes` controls the maximum fetched payload size for extractable documents, including PDFs
-- `embeddings.enabled` enables semantic topic-result filtering for `collect-sources`
-- `embeddings.base_url` and `embeddings.model` point at an OpenAI-compatible `/embeddings` API
-- `embeddings.similarity_threshold` sets the minimum cosine similarity required to keep a candidate in topic collection
-- `embeddings.api_key` can be supplied with `SONAR_EMBEDDINGS_API_KEY` or `OPENAI_API_KEY`
-
-## Synapse Handoff
-
-The intended downstream flow stays:
-
-- call `prepare-paper-set` or `collect-sources`
-- persist the prepared bundle manifest
-- hand `prepared_source_bundle.json` to Synapse ingest
-- let Synapse own indexing, knowledge compile, and review
-
-For Synapse-facing prepared bundles, `bundle_version = 1` is the current compatibility contract.
-Synapse normalizes from the core prepared-source fields and tolerates extra metadata, so Sonar can keep adding non-breaking bundle details around that stable handoff surface.
-
-## Docs
-
+- [Getting Started](docs/getting-started.md)
+- [MCP Guide](docs/guides/mcp.md)
+- [HTTP API Guide](docs/guides/http-api.md)
+- [Resilient Retrieval](docs/guides/resilient-retrieval.md)
+- [Prepared Bundles](docs/guides/prepared-bundles.md)
+- [Configuration Reference](docs/reference/configuration.md)
 - [Architecture](docs/architecture.md)
-- [HTTP API](docs/http-api.md)
-- [MCP Requirements](docs/mcp-requirements.md)
-- [Quick Start](docs/quick-start.md)
-- [OpenAPI](docs/openapi.json)
+- [Contributing](CONTRIBUTING.md)
+
+`just` is available as an optional convenience interface. Run `just --list` to
+see recipes; every guide also shows the underlying commands.

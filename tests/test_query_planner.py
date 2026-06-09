@@ -7,7 +7,9 @@ def test_normalize_query_collapses_whitespace():
 
 
 def test_generate_query_variants_keeps_original_and_focused_variant():
-    variants = generate_query_variants("what is the latest open source ai search engine")
+    variants = generate_query_variants(
+        "what is the latest open source ai search engine"
+    )
 
     assert variants[0] == "what is the latest open source ai search engine"
     assert "latest open source search engine" in variants

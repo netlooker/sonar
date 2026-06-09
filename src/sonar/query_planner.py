@@ -40,13 +40,21 @@ def generate_query_variants(query: str) -> list[str]:
     variants = [normalized]
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]*", normalized)
     if len(tokens) >= 5:
-        focused = [token for token in tokens if token.lower() not in STOPWORDS and len(token) >= 3][:8]
+        focused = [
+            token
+            for token in tokens
+            if token.lower() not in STOPWORDS and len(token) >= 3
+        ][:8]
         if focused:
             variants.append(" ".join(focused))
 
     phrases = re.findall(r'"([^"]+)"', normalized)
     if phrases:
-        phrase_variant = " ".join(f'"{normalize_query(phrase)}"' for phrase in phrases if normalize_query(phrase))
+        phrase_variant = " ".join(
+            f'"{normalize_query(phrase)}"'
+            for phrase in phrases
+            if normalize_query(phrase)
+        )
         if phrase_variant:
             variants.append(phrase_variant)
 

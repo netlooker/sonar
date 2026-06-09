@@ -1,32 +1,38 @@
 # Architecture
 
-Sonar is a deterministic live-web evidence engine for agents.
+Sonar is a deterministic live-web evidence service with four layers:
 
-It has four layers:
+1. Typed settings and runtime resolution
+2. Policy-aware retrieval and deterministic extraction
+3. Service orchestration and SQLite persistence
+4. Thin HTTP and MCP transport adapters
 
-1. typed settings and runtime resolution
-2. policy-aware retrieval backends and deterministic extraction
-3. deterministic service core
-4. thin transport adapters for HTTP and MCP
+## Retrieval Flow
 
-Core responsibilities:
+Search requests go to an external SearxNG instance, then Sonar normalizes,
+deduplicates, ranks, and caches the results.
 
-- search via an external SearxNG instance
-- deterministic query normalization and variant generation
-- URL canonicalization and dedupe
-- ranking with freshness and domain priors
-- cached retrieval bodies, metadata, and provenance
-- optional Scrapling HTTP and CloakBrowser fallback for difficult HTML
-- readable-text extraction across HTML, PDF, DOCX, ODT, Markdown, and text
-- metadata persistence for fetched documents and prepared-source bundle registries
-- durable prepared-source manifests for downstream handoff to note-writing and indexing systems
-- a stable prepared-bundle compatibility boundary for Synapse ingest via `bundle_version = 1`
+Known URLs use the normal HTTP backend first. Difficult HTML may use optional
+Scrapling and CloakBrowser fallback. Policy is checked before every live
+attempt, and policy or robots denial is terminal. Retrieved bodies and
+provenance are cached so later extraction can avoid duplicate requests.
 
-Design rules:
+Extraction is deterministic and format-aware for HTML, PDF, DOCX, ODT,
+Markdown, and plain text.
 
-- deterministic mechanics first
-- no mandatory reasoning backend
-- transport adapters stay thin
-- policy and robots denials are terminal
-- browser fallback is opt-in and HTML-only
-- tracked configs stay public-safe
+## Service Surface
+
+The service core owns search, fetch, extraction, paper discovery, prepared
+source collection, and durable bundle persistence. HTTP and MCP adapters map
+those operations without adding reasoning behavior.
+
+## Design Rules
+
+- No mandatory LLM or reasoning backend in the core path
+- Deterministic mechanics before transport concerns
+- Thin transport adapters
+- Additive SQLite migrations
+- Browser fallback is opt-in and HTML-only
+- Policy and robots denials are terminal
+- Tracked configuration remains public-safe
+- Prepared bundles preserve the `bundle_version = 1` compatibility boundary

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 import httpx
 
-from .errors import SonarBadRequestError, SonarTimeoutError, SonarUpstreamUnavailableError
+from .errors import (
+    SonarBadRequestError,
+    SonarTimeoutError,
+    SonarUpstreamUnavailableError,
+)
 
 
 @dataclass(frozen=True)
@@ -51,7 +55,9 @@ class EmbeddingProvider:
             response.raise_for_status()
             payload = response.json()
         except httpx.TimeoutException as exc:
-            raise SonarTimeoutError("Embedding request timed out.", timeout_seconds=self._timeout) from exc
+            raise SonarTimeoutError(
+                "Embedding request timed out.", timeout_seconds=self._timeout
+            ) from exc
         except httpx.HTTPError as exc:
             raise SonarUpstreamUnavailableError("Embedding request failed.") from exc
         finally:
@@ -59,13 +65,17 @@ class EmbeddingProvider:
 
         data = payload.get("data")
         if not isinstance(data, list) or len(data) != len(inputs):
-            raise SonarUpstreamUnavailableError("Embedding response was malformed.", retryable=False)
+            raise SonarUpstreamUnavailableError(
+                "Embedding response was malformed.", retryable=False
+            )
 
         vectors: list[list[float]] = []
         for item in data:
             embedding = item.get("embedding") if isinstance(item, dict) else None
             if not isinstance(embedding, list) or not embedding:
-                raise SonarUpstreamUnavailableError("Embedding response was malformed.", retryable=False)
+                raise SonarUpstreamUnavailableError(
+                    "Embedding response was malformed.", retryable=False
+                )
             vectors.append([float(value) for value in embedding])
         return vectors
 

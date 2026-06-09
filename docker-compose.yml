@@ -13,6 +13,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     image: sonar:compose
     restart: unless-stopped
     depends_on:
@@ -24,6 +25,41 @@ services:
       - sonar-data:/data
     ports:
       - "8001:8001"
+
+  sonar-mcp:
+    profiles: ["mcp"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: sonar:compose
+    restart: unless-stopped
+    depends_on:
+      - searxng
+    command: ["sonar-mcp"]
+    environment:
+      SONAR_CONFIG: /app/config/sonar.toml
+      SONAR_MCP_TRANSPORT: streamable-http
+      SONAR_MCP_HOST: 0.0.0.0
+      SONAR_MCP_PORT: 8000
+      SONAR_MCP_PATH: /mcp
+    volumes:
+      - ./config/sonar.compose.example.toml:/app/config/sonar.toml:ro
+      - sonar-data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 volumes:
   sonar-data:

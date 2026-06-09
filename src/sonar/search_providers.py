@@ -65,7 +65,9 @@ class SearxNGProvider:
 
         client = httpx.Client(transport=self.transport, timeout=self.timeout)
         try:
-            response = client.get(f"{self.base_url}/search", params=params, headers=headers)
+            response = client.get(
+                f"{self.base_url}/search", params=params, headers=headers
+            )
             response.raise_for_status()
             payload = response.json()
         except httpx.TimeoutException as exc:
@@ -74,13 +76,19 @@ class SearxNGProvider:
                 timeout_seconds=self.timeout,
             ) from exc
         except httpx.HTTPError as exc:
-            raise SonarUpstreamUnavailableError("SearxNG search request failed.") from exc
+            raise SonarUpstreamUnavailableError(
+                "SearxNG search request failed."
+            ) from exc
         finally:
             client.close()
 
         results = []
         for position, item in enumerate(payload.get("results", []), start=1):
-            engine_value = item.get("engine") or ",".join(item.get("engines", []) or []) or "searxng"
+            engine_value = (
+                item.get("engine")
+                or ",".join(item.get("engines", []) or [])
+                or "searxng"
+            )
             results.append(
                 SearchProviderResult(
                     title=str(item.get("title", "")),

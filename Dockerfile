@@ -76,3 +76,5 @@ RUN mkdir -p /app/config /app/secrets /data
 EXPOSE 8000
 
 CMD ["sonar-mcp"]
+
+FROM runtime AS default

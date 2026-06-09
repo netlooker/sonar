@@ -150,13 +150,16 @@ def test_mcp_tool_schemas_hide_operator_only_paths():
         assert forbidden.isdisjoint(tool.parameters.get("properties", {}))
 
 
-def test_example_mcp_config_is_valid_json():
+def test_opencode_mcp_config_is_valid_json():
     payload = json.loads(
-        Path("config/sonar.mcp.example.json").read_text(encoding="utf-8")
+        Path("config/opencode.mcp.example.json").read_text(encoding="utf-8")
     )
 
-    assert "mcpServers" in payload
-    assert payload["mcpServers"]["sonar"]["env"]["SONAR_MCP_TRANSPORT"] == "stdio"
+    assert payload["mcp"]["sonar"] == {
+        "type": "remote",
+        "url": "http://127.0.0.1:8000/mcp",
+        "enabled": True,
+    }
 
 
 def test_mcp_entrypoint_requires_config(monkeypatch):
