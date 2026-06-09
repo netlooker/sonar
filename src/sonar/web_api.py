@@ -49,7 +49,7 @@ def create_app():
     app = FastAPI(
         title="Sonar API",
         summary="HTTP and OpenAPI interface for deterministic live-web evidence.",
-        version="0.3.0",
+        version="0.3.1",
         description="Expose Sonar search, fetch, multi-format extraction, prepared paper sets, durable prepared-source bundles, and runtime readiness over JSON/HTTP.",
     )
 
